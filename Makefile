@@ -116,7 +116,16 @@ update: $(BIN)/go
 .PHONY: build
 build: $(BIN)/go
 	@echo "Building..."
-	@go build -o ./bin/ ./...
+	@go build -o ./bin/vault-plugin-secrets-pingfederate ./cmd/vault-plugin-secrets-pingfederate
+
+.PHONY: dev
+dev: build
+	@echo "Starting Vault in dev mode with plugin directory..."
+	@vault server -dev -dev-root-token-id=root -dev-plugin-dir=./bin
+
+.PHONY: enable
+enable:
+	@vault secrets enable -path=pingfederate vault-plugin-secrets-pingfederate
 
 .PHONY: install
 install: build

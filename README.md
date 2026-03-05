@@ -1,2 +1,2 @@
-# go-project-template
-A GitHub repository template to be used as a starting point for projects written in Go.
+# vault-plugin-secrets-pingfederate
+A HashiCorp Vault secrets engine plugin for managing PingFederate credentials.
