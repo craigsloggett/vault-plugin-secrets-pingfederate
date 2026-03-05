@@ -18,6 +18,7 @@ func pathRoles(_ *pingFederateBackend) []*framework.Path {
 					Required:    true,
 				},
 			},
+			ExistenceCheck: roleExistenceCheck,
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: roleReadOperation,
@@ -46,6 +47,18 @@ func pathRoles(_ *pingFederateBackend) []*framework.Path {
 			HelpDescription: "List existing roles.",
 		},
 	}
+}
+
+func roleExistenceCheck(ctx context.Context, req *logical.Request, d *framework.FieldData) (bool, error) {
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return false, nil
+	}
+	entry, err := req.Storage.Get(ctx, "roles/"+name)
+	if err != nil {
+		return false, err
+	}
+	return entry != nil, nil
 }
 
 func roleReadOperation(_ context.Context, _ *logical.Request, _ *framework.FieldData) (*logical.Response, error) {

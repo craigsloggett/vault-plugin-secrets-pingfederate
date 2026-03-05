@@ -9,8 +9,9 @@ import (
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
 	return &framework.Path{
-		Pattern: "config",
-		Fields:  map[string]*framework.FieldSchema{},
+		Pattern:        "config",
+		Fields:         map[string]*framework.FieldSchema{},
+		ExistenceCheck: configExistenceCheck,
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
 				Callback: configReadOperation,
@@ -25,6 +26,14 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 		HelpSynopsis:    "Configure the PingFederate connection.",
 		HelpDescription: "Configure the PingFederate connection.",
 	}
+}
+
+func configExistenceCheck(ctx context.Context, req *logical.Request, _ *framework.FieldData) (bool, error) {
+	entry, err := req.Storage.Get(ctx, "config")
+	if err != nil {
+		return false, err
+	}
+	return entry != nil, nil
 }
 
 func configReadOperation(_ context.Context, _ *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
