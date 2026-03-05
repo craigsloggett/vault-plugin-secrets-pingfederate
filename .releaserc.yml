@@ -1,12 +1,14 @@
-branches:
-  - main
-
-ci: false
+branches: main
 
 plugins:
+  - '@semantic-release/git'
+  - '@semantic-release/github'
+
   - - '@semantic-release/commit-analyzer'
     - preset: conventionalCommits
       releaseRules:
+        - type: major
+          release: major
         - type: feat
           release: minor
         - type: fix
@@ -30,6 +32,33 @@ plugins:
         - type: chore
           scope: deps
           release: patch
-  - '@semantic-release/git'
 
-preset: conventionalcommits
+  - - '@semantic-release/release-notes-generator'
+    - preset: conventionalCommits
+      presetConfig:
+        types:
+          - type: major
+            section: Major
+          - type: feat
+            section: Features
+          - type: fix
+            section: Fixes
+          - type: perf
+            section: Performance
+          - type: revert
+            section: Revert
+          - type: docs
+            section: Documentation
+          - type: style
+            section: Style
+          - type: test
+            section: Tests
+          - type: build
+            section: Build System
+          - type: ci
+            section: CI
+          - type: chore
+            section: Chores
+          - type: chore
+            scope: deps
+            section: Dependencies
