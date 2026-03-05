@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: GitHub
+    # Prevent an initial run on repository creation using this template.
+    # Remove this guard line in repositories created from this template.
+    if: github.repository == 'craigsloggett-lab/go-project-template'
+    runs-on: ubuntu-24.04
+
+    outputs:
+      new-release-published: ${{ steps.release.outputs.new-release-published }}
+      new-release-version: ${{ steps.release.outputs.new-release-version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Create a GitHub Release
+        id: release
+        uses: craigsloggett/create-github-release@0038e266459f08ef2ed51737ce929218404e9381 # v1.0.6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
