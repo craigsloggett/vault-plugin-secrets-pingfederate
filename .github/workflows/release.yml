@@ -13,9 +13,6 @@ permissions:
 jobs:
   release:
     name: GitHub
-    # Prevent an initial run on repository creation using this template.
-    # Remove this guard line in repositories created from this template.
-    if: github.repository == 'craigsloggett-lab/go-project-template'
     runs-on: ubuntu-24.04
 
     outputs:
