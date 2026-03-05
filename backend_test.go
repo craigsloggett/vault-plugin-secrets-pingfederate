@@ -48,7 +48,7 @@ func TestConfigReadEmpty(t *testing.T) {
 	}
 }
 
-func TestConfigWrite(t *testing.T) {
+func TestConfigWriteMissingFields(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
@@ -60,8 +60,145 @@ func TestConfigWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing required fields")
+	}
+}
+
+func TestConfigWriteAndRead(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"client_id":     "my-client-id",
+			"client_secret": "my-client-secret",
+			"url":           "https://pingfederate.example.com:9999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if resp != nil && resp.IsError() {
 		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Read config back.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["client_id"] != "my-client-id" {
+		t.Fatalf("expected client_id 'my-client-id', got %v", resp.Data["client_id"])
+	}
+	if resp.Data["url"] != "https://pingfederate.example.com:9999" {
+		t.Fatalf("expected url 'https://pingfederate.example.com:9999', got %v", resp.Data["url"])
+	}
+	if _, exists := resp.Data["client_secret"]; exists {
+		t.Fatal("client_secret should not be returned in read response")
+	}
+}
+
+func TestConfigUpdate(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Create initial config.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"client_id":     "my-client-id",
+			"client_secret": "my-client-secret",
+			"url":           "https://pingfederate.example.com:9999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Update only the URL.
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"url": "https://pingfederate-new.example.com:9999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the update preserved existing fields.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Data["client_id"] != "my-client-id" {
+		t.Fatalf("expected client_id 'my-client-id', got %v", resp.Data["client_id"])
+	}
+	if resp.Data["url"] != "https://pingfederate-new.example.com:9999" {
+		t.Fatalf("expected updated url, got %v", resp.Data["url"])
+	}
+}
+
+func TestConfigDelete(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Create config.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"client_id":     "my-client-id",
+			"client_secret": "my-client-secret",
+			"url":           "https://pingfederate.example.com:9999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Delete config.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify it's gone.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response after delete, got %v", resp)
 	}
 }
 
