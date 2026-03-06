@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
 type pingFederateConfig struct {
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	URL          string `json:"url"`
+	ClientID     string        `json:"client_id"`
+	ClientSecret string        `json:"client_secret"`
+	URL          string        `json:"url"`
+	TokenURL     string        `json:"token_url"`
+	DefaultTTL   time.Duration `json:"default_ttl,omitempty"`
+	MaxTTL       time.Duration `json:"max_ttl,omitempty"`
 }
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
@@ -40,6 +44,19 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "The base URL of the PingFederate admin API (e.g. https://pingfederate.example.com:9999).",
 				Required:    true,
+			},
+			"token_url": {
+				Type:        framework.TypeString,
+				Description: "The PingFederate OAuth 2.0 token endpoint URL (e.g. https://pingfederate.example.com:9031/as/token.oauth2).",
+				Required:    true,
+			},
+			"default_ttl": {
+				Type:        framework.TypeDurationSecond,
+				Description: "Default TTL for generated credentials. If not set, uses Vault's system default.",
+			},
+			"max_ttl": {
+				Type:        framework.TypeDurationSecond,
+				Description: "Maximum TTL for generated credentials. If not set, uses Vault's system max.",
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -78,11 +95,20 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 		return nil, nil
 	}
 
+	data := map[string]any{
+		"client_id": cfg.ClientID,
+		"url":       cfg.URL,
+		"token_url": cfg.TokenURL,
+	}
+	if cfg.DefaultTTL > 0 {
+		data["default_ttl"] = int64(cfg.DefaultTTL.Seconds())
+	}
+	if cfg.MaxTTL > 0 {
+		data["max_ttl"] = int64(cfg.MaxTTL.Seconds())
+	}
+
 	return &logical.Response{
-		Data: map[string]interface{}{
-			"client_id": cfg.ClientID,
-			"url":       cfg.URL,
-		},
+		Data: data,
 	}, nil
 }
 
@@ -104,6 +130,19 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	if rawURL, ok := d.GetOk("url"); ok {
 		cfg.URL, _ = rawURL.(string)
 	}
+	if tokenURL, ok := d.GetOk("token_url"); ok {
+		cfg.TokenURL, _ = tokenURL.(string)
+	}
+	if v, ok := d.GetOk("default_ttl"); ok {
+		if seconds, ok := v.(int); ok {
+			cfg.DefaultTTL = time.Duration(int64(seconds) * int64(time.Second))
+		}
+	}
+	if v, ok := d.GetOk("max_ttl"); ok {
+		if seconds, ok := v.(int); ok {
+			cfg.MaxTTL = time.Duration(int64(seconds) * int64(time.Second))
+		}
+	}
 
 	if cfg.ClientID == "" {
 		return logical.ErrorResponse("client_id is required"), nil
@@ -113,6 +152,9 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	}
 	if cfg.URL == "" {
 		return logical.ErrorResponse("url is required"), nil
+	}
+	if cfg.TokenURL == "" {
+		return logical.ErrorResponse("token_url is required"), nil
 	}
 
 	entry, err := logical.StorageEntryJSON("config", cfg)
