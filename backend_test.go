@@ -2,8 +2,15 @@ package pingfederate
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -324,12 +331,77 @@ func TestConfigDelete(t *testing.T) {
 
 // --- Static Role Tests ---
 
-func TestStaticRoleReadEmpty(t *testing.T) {
+func TestStaticRoleReadConfigEmpty(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
 		Path:      "static-roles/test-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response for nonexistent role, got %v", resp)
+	}
+}
+
+func TestStaticRoleReadConfigReturnsConfig(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write a role.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":      "terraform",
+			"client_id": "terraform-client",
+			"ttl":       3600,
+			"max_ttl":   7200,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Read should return role config, NOT credentials.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["name"] != "terraform" {
+		t.Fatalf("expected name 'terraform', got %v", resp.Data["name"])
+	}
+	if resp.Data["client_id"] != "terraform-client" {
+		t.Fatalf("expected client_id 'terraform-client', got %v", resp.Data["client_id"])
+	}
+	if resp.Data["ttl"] != int64(3600) {
+		t.Fatalf("expected ttl 3600, got %v", resp.Data["ttl"])
+	}
+	if resp.Data["max_ttl"] != int64(7200) {
+		t.Fatalf("expected max_ttl 7200, got %v", resp.Data["max_ttl"])
+	}
+	// Should NOT contain credential data.
+	if _, exists := resp.Data["access_token"]; exists {
+		t.Fatal("static-roles read should not return access_token; use static-creds instead")
+	}
+}
+
+func TestStaticCredsReadEmpty(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-creds/test-role",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -443,9 +515,9 @@ func TestStaticRoleDelete(t *testing.T) {
 	}
 }
 
-// --- Credential Generation Tests ---
+// --- Credential Generation Tests (static-creds) ---
 
-func TestStaticRoleReadGeneratesToken(t *testing.T) {
+func TestStaticCredsReadGeneratesToken(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	// Inject mock client.
@@ -467,10 +539,10 @@ func TestStaticRoleReadGeneratesToken(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Read the role — should return a bearer token.
+	// Read creds — should return a bearer token.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "static-roles/terraform",
+		Path:      "static-creds/terraform",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -490,7 +562,7 @@ func TestStaticRoleReadGeneratesToken(t *testing.T) {
 	}
 }
 
-func TestStaticRoleReadWithoutConfig(t *testing.T) {
+func TestStaticCredsReadWithoutConfig(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	// Write a role without configuring the backend.
@@ -505,18 +577,18 @@ func TestStaticRoleReadWithoutConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Read should fail because backend is not configured.
+	// Read creds should fail because backend is not configured.
 	_, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "static-roles/terraform",
+		Path:      "static-creds/terraform",
 		Storage:   storage,
 	})
 	if err == nil {
-		t.Fatal("expected error when reading role without backend config")
+		t.Fatal("expected error when reading creds without backend config")
 	}
 }
 
-func TestStaticRoleReadClientError(t *testing.T) {
+func TestStaticCredsReadClientError(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	b.client = &mockPingFederateClient{
@@ -542,7 +614,7 @@ func TestStaticRoleReadClientError(t *testing.T) {
 
 	_, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "static-roles/terraform",
+		Path:      "static-creds/terraform",
 		Storage:   storage,
 	})
 	if err == nil {
@@ -626,5 +698,609 @@ func TestRotateRootPingFederateError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when PingFederate rotation fails")
+	}
+}
+
+// --- JWT Config Tests ---
+
+func testRSAPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+func testECPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate EC key: %v", err)
+	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+func writeTestJWTConfig(t *testing.T, b logical.Backend, storage logical.Storage) {
+	t.Helper()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing JWT config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response writing JWT config: %v", resp.Error())
+	}
+}
+
+func TestConfigWriteJWT(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+}
+
+func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "private_key_jwt",
+			"client_id":      "jwt-admin-client",
+			"private_key":    testRSAPrivateKeyPEM(t),
+			"private_key_id": "key-1",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify default signing algorithm was set.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SigningAlgorithm != "RS256" {
+		t.Fatalf("expected default signing_algorithm RS256, got %q", cfg.SigningAlgorithm)
+	}
+}
+
+func TestConfigWriteJWTMissingPrivateKey(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "private_key_jwt",
+			"client_id":      "jwt-admin-client",
+			"private_key_id": "key-1",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing private_key")
+	}
+}
+
+func TestConfigWriteJWTMissingKeyID(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":   "jwt-admin-client",
+			"private_key": testRSAPrivateKeyPEM(t),
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing private_key_id")
+	}
+}
+
+func TestConfigWriteJWTInvalidAlgorithm(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "INVALID",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for invalid signing_algorithm")
+	}
+}
+
+func TestConfigWriteJWTKeyAlgorithmMismatch(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testECPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for EC key with RS256")
+	}
+}
+
+func TestConfigWriteJWTInvalidKey(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "private_key_jwt",
+			"client_id":      "jwt-admin-client",
+			"private_key":    "not-a-valid-pem",
+			"private_key_id": "key-1",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for invalid PEM key")
+	}
+}
+
+func TestConfigWriteInvalidAuthMethod(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":   "invalid_method",
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for invalid auth_method")
+	}
+}
+
+func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Start with client_secret auth.
+	writeTestConfig(t, b, storage)
+
+	// Switch to private_key_jwt.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify client_secret was cleared from storage.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientSecret != "" {
+		t.Fatal("expected client_secret to be cleared after switching to private_key_jwt")
+	}
+	if cfg.PrivateKey == "" {
+		t.Fatal("expected private_key to be set")
+	}
+
+	// Switch back to client_secret.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":   "client_secret",
+			"client_secret": "new-secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify JWT fields were cleared from storage.
+	cfg, err = getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PrivateKey != "" {
+		t.Fatal("expected private_key to be cleared after switching to client_secret")
+	}
+	if cfg.PrivateKeyID != "" {
+		t.Fatal("expected private_key_id to be cleared after switching to client_secret")
+	}
+	if cfg.SigningAlgorithm != "" {
+		t.Fatal("expected signing_algorithm to be cleared after switching to client_secret")
+	}
+	if cfg.ClientSecret != "new-secret" {
+		t.Fatalf("expected client_secret 'new-secret', got %q", cfg.ClientSecret)
+	}
+}
+
+func TestConfigReadJWT(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["auth_method"] != "private_key_jwt" {
+		t.Fatalf("expected auth_method 'private_key_jwt', got %v", resp.Data["auth_method"])
+	}
+	if resp.Data["signing_algorithm"] != "RS256" {
+		t.Fatalf("expected signing_algorithm 'RS256', got %v", resp.Data["signing_algorithm"])
+	}
+	if resp.Data["private_key_id"] != "key-1" {
+		t.Fatalf("expected private_key_id 'key-1', got %v", resp.Data["private_key_id"])
+	}
+	if _, exists := resp.Data["private_key"]; exists {
+		t.Fatal("private_key should not be returned in read response")
+	}
+}
+
+func TestConfigReadClientSecretDefaultAuthMethod(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["auth_method"] != "client_secret" {
+		t.Fatalf("expected auth_method 'client_secret', got %v", resp.Data["auth_method"])
+	}
+}
+
+func TestRotateRootJWTReturnsError(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "rotate-root",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for rotate-root with private_key_jwt")
+	}
+}
+
+func TestStaticCredsReadGeneratesTokenJWT(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Inject mock client (same interface, independent of auth method).
+	b.client = &mockPingFederateClient{}
+
+	writeTestJWTConfig(t, b, storage)
+
+	// Create a role.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":      "terraform",
+			"client_id": "terraform-client",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Read creds — should return a bearer token.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-creds/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response with access token, got nil")
+	}
+	if resp.Data["access_token"] != "mock-access-token" {
+		t.Fatalf("expected 'mock-access-token', got %v", resp.Data["access_token"])
+	}
+}
+
+// --- Rotation Period Tests ---
+
+func TestStaticRoleWriteWithRotationPeriod(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"rotation_period": 3600,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Read back config and verify rotation_period is set.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Data["rotation_period"] != int64(3600) {
+		t.Fatalf("expected rotation_period 3600, got %v", resp.Data["rotation_period"])
+	}
+	if resp.Data["last_rotated"] == nil {
+		t.Fatal("expected last_rotated to be set")
+	}
+}
+
+func TestStaticRoleWriteRotationPeriodTooShort(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"rotation_period": 30,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for rotation_period < 60s")
+	}
+}
+
+func TestPeriodicFuncRotatesWhenDue(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	rotated := false
+	b.client = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, clientID string) (string, error) {
+			if clientID != "terraform-client" {
+				t.Fatalf("expected rotation of terraform-client, got %s", clientID)
+			}
+			rotated = true
+			return "new-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	// Write a role with rotation_period, but set last_rotated far in the past.
+	role := &staticRoleEntry{
+		Name:           "terraform",
+		ClientID:       "terraform-client",
+		RotationPeriod: 60 * time.Second,
+		LastRotated:    time.Now().Add(-2 * time.Hour),
+	}
+	entry, err := logical.StorageEntryJSON("static-roles/terraform", role)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := storage.Put(context.Background(), entry); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Call periodic function.
+	err = b.periodicFunc(context.Background(), &logical.Request{Storage: storage})
+	if err != nil {
+		t.Fatalf("periodicFunc returned error: %v", err)
+	}
+
+	if !rotated {
+		t.Fatal("expected rotation to occur")
+	}
+
+	// Verify last_rotated was updated.
+	updatedRole, err := getStaticRole(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if time.Since(updatedRole.LastRotated) > 5*time.Second {
+		t.Fatalf("expected last_rotated to be recent, got %v", updatedRole.LastRotated)
+	}
+}
+
+func TestPeriodicFuncSkipsWhenNotDue(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	rotated := false
+	b.client = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			rotated = true
+			return "new-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	// Write a role with rotation_period and last_rotated = now (not due yet).
+	role := &staticRoleEntry{
+		Name:           "terraform",
+		ClientID:       "terraform-client",
+		RotationPeriod: 3600 * time.Second,
+		LastRotated:    time.Now(),
+	}
+	entry, err := logical.StorageEntryJSON("static-roles/terraform", role)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := storage.Put(context.Background(), entry); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	err = b.periodicFunc(context.Background(), &logical.Request{Storage: storage})
+	if err != nil {
+		t.Fatalf("periodicFunc returned error: %v", err)
+	}
+
+	if rotated {
+		t.Fatal("expected no rotation since period has not elapsed")
+	}
+}
+
+func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	rotated := false
+	b.client = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			rotated = true
+			return "new-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	// Write a role without rotation_period.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":      "terraform",
+			"client_id": "terraform-client",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	err = b.periodicFunc(context.Background(), &logical.Request{Storage: storage})
+	if err != nil {
+		t.Fatalf("periodicFunc returned error: %v", err)
+	}
+
+	if rotated {
+		t.Fatal("expected no rotation for role without rotation_period")
 	}
 }

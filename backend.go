@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -49,8 +51,9 @@ func backend() *pingFederateBackend {
 			},
 			pathStaticRoles(b),
 		),
-		BackendType: logical.TypeLogical,
-		Invalidate:  b.invalidate,
+		BackendType:  logical.TypeLogical,
+		Invalidate:   b.invalidate,
+		PeriodicFunc: b.periodicFunc,
 	}
 
 	return b
@@ -91,8 +94,71 @@ func (b *pingFederateBackend) getClient(ctx context.Context, s logical.Storage) 
 		return nil, fmt.Errorf("backend not configured")
 	}
 
-	b.client = newPingFederateClient(cfg)
+	if cfg.AuthMethod == "private_key_jwt" {
+		b.client = newPingFederateJWTClient(cfg)
+	} else {
+		b.client = newPingFederateClient(cfg)
+	}
 	return b.client, nil
+}
+
+// periodicFunc is called by Vault's rollback manager on a regular interval.
+// It checks all static roles for rotation_period and rotates client secrets
+// that are due.
+func (b *pingFederateBackend) periodicFunc(ctx context.Context, req *logical.Request) error {
+	logger := b.Logger()
+
+	roles, err := req.Storage.List(ctx, "static-roles/")
+	if err != nil {
+		return fmt.Errorf("failed to list static roles: %w", err)
+	}
+
+	for _, roleName := range roles {
+		if err := b.rotateStaticRoleIfDue(ctx, req.Storage, roleName, logger); err != nil {
+			logger.Error("scheduled rotation failed", "role", roleName, "error", err)
+		}
+	}
+
+	return nil
+}
+
+func (b *pingFederateBackend) rotateStaticRoleIfDue(ctx context.Context, s logical.Storage, roleName string, logger hclog.Logger) error {
+	role, err := getStaticRole(ctx, s, roleName)
+	if err != nil || role == nil {
+		return err
+	}
+
+	if role.RotationPeriod <= 0 {
+		return nil
+	}
+
+	if time.Since(role.LastRotated) < role.RotationPeriod {
+		return nil
+	}
+
+	client, err := b.getClient(ctx, s)
+	if err != nil {
+		return fmt.Errorf("failed to get client: %w", err)
+	}
+
+	_, err = client.UpdateClientSecret(ctx, role.ClientID)
+	if err != nil {
+		return fmt.Errorf("failed to rotate secret for client %s: %w", role.ClientID, err)
+	}
+
+	role.LastRotated = time.Now()
+
+	entry, err := logical.StorageEntryJSON("static-roles/"+roleName, role)
+	if err != nil {
+		return fmt.Errorf("failed to create storage entry: %w", err)
+	}
+
+	if err := s.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write role after rotation: %w", err)
+	}
+
+	logger.Info("rotated client secret on schedule", "role", roleName, "client_id", role.ClientID)
+	return nil
 }
 
 const backendHelp = `
