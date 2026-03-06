@@ -2,6 +2,12 @@ package pingfederate
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"testing"
 
@@ -626,5 +632,350 @@ func TestRotateRootPingFederateError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when PingFederate rotation fails")
+	}
+}
+
+// --- JWT Config Tests ---
+
+func testRSAPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+func testECPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate EC key: %v", err)
+	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+func writeTestJWTConfig(t *testing.T, b logical.Backend, storage logical.Storage) {
+	t.Helper()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing JWT config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response writing JWT config: %v", resp.Error())
+	}
+}
+
+func TestConfigWriteJWT(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+}
+
+func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "private_key_jwt",
+			"client_id":      "jwt-admin-client",
+			"private_key":    testRSAPrivateKeyPEM(t),
+			"private_key_id": "key-1",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify default signing algorithm was set.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SigningAlgorithm != "RS256" {
+		t.Fatalf("expected default signing_algorithm RS256, got %q", cfg.SigningAlgorithm)
+	}
+}
+
+func TestConfigWriteJWTMissingPrivateKey(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "private_key_jwt",
+			"client_id":      "jwt-admin-client",
+			"private_key_id": "key-1",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing private_key")
+	}
+}
+
+func TestConfigWriteJWTMissingKeyID(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":    "jwt-admin-client",
+			"private_key":  testRSAPrivateKeyPEM(t),
+			"url":          "https://pingfederate.example.com:9999",
+			"token_url":    "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing private_key_id")
+	}
+}
+
+func TestConfigWriteJWTInvalidAlgorithm(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "INVALID",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for invalid signing_algorithm")
+	}
+}
+
+func TestConfigWriteJWTKeyAlgorithmMismatch(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testECPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for EC key with RS256")
+	}
+}
+
+func TestConfigWriteJWTInvalidKey(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "private_key_jwt",
+			"client_id":      "jwt-admin-client",
+			"private_key":    "not-a-valid-pem",
+			"private_key_id": "key-1",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for invalid PEM key")
+	}
+}
+
+func TestConfigWriteInvalidAuthMethod(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":    "invalid_method",
+			"client_id":      "admin-client",
+			"client_secret":  "admin-secret",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for invalid auth_method")
+	}
+}
+
+func TestConfigReadJWT(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["auth_method"] != "private_key_jwt" {
+		t.Fatalf("expected auth_method 'private_key_jwt', got %v", resp.Data["auth_method"])
+	}
+	if resp.Data["signing_algorithm"] != "RS256" {
+		t.Fatalf("expected signing_algorithm 'RS256', got %v", resp.Data["signing_algorithm"])
+	}
+	if resp.Data["private_key_id"] != "key-1" {
+		t.Fatalf("expected private_key_id 'key-1', got %v", resp.Data["private_key_id"])
+	}
+	if _, exists := resp.Data["private_key"]; exists {
+		t.Fatal("private_key should not be returned in read response")
+	}
+}
+
+func TestConfigReadClientSecretDefaultAuthMethod(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["auth_method"] != "client_secret" {
+		t.Fatalf("expected auth_method 'client_secret', got %v", resp.Data["auth_method"])
+	}
+}
+
+func TestRotateRootJWTReturnsError(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "rotate-root",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for rotate-root with private_key_jwt")
+	}
+}
+
+func TestStaticRoleReadGeneratesTokenJWT(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Inject mock client (same interface, independent of auth method).
+	b.client = &mockPingFederateClient{}
+
+	writeTestJWTConfig(t, b, storage)
+
+	// Create a role.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":      "terraform",
+			"client_id": "terraform-client",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Read the role — should return a bearer token.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response with access token, got nil")
+	}
+	if resp.Data["access_token"] != "mock-access-token" {
+		t.Fatalf("expected 'mock-access-token', got %v", resp.Data["access_token"])
 	}
 }

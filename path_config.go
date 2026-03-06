@@ -11,12 +11,16 @@ import (
 )
 
 type pingFederateConfig struct {
-	ClientID     string        `json:"client_id"`
-	ClientSecret string        `json:"client_secret"`
-	URL          string        `json:"url"`
-	TokenURL     string        `json:"token_url"`
-	DefaultTTL   time.Duration `json:"default_ttl,omitempty"`
-	MaxTTL       time.Duration `json:"max_ttl,omitempty"`
+	AuthMethod       string        `json:"auth_method,omitempty"`
+	ClientID         string        `json:"client_id"`
+	ClientSecret     string        `json:"client_secret,omitempty"`
+	PrivateKey       string        `json:"private_key,omitempty"`
+	PrivateKeyID     string        `json:"private_key_id,omitempty"`
+	SigningAlgorithm string        `json:"signing_algorithm,omitempty"`
+	URL              string        `json:"url"`
+	TokenURL         string        `json:"token_url"`
+	DefaultTTL       time.Duration `json:"default_ttl,omitempty"`
+	MaxTTL           time.Duration `json:"max_ttl,omitempty"`
 }
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
@@ -24,6 +28,10 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 		Pattern:        "config",
 		ExistenceCheck: configExistenceCheck,
 		Fields: map[string]*framework.FieldSchema{
+			"auth_method": {
+				Type:        framework.TypeString,
+				Description: `Authentication method for the PingFederate admin API: "client_secret" or "private_key_jwt". Defaults to "client_secret".`,
+			},
 			"client_id": {
 				Type:        framework.TypeString,
 				Description: "The OAuth 2.0 client ID for authenticating with PingFederate.",
@@ -34,11 +42,25 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 			},
 			"client_secret": {
 				Type:        framework.TypeString,
-				Description: "The OAuth 2.0 client secret for authenticating with PingFederate.",
-				Required:    true,
+				Description: "The OAuth 2.0 client secret for authenticating with PingFederate. Required when auth_method is client_secret.",
 				DisplayAttrs: &framework.DisplayAttributes{
 					Sensitive: true,
 				},
+			},
+			"private_key": {
+				Type:        framework.TypeString,
+				Description: "PEM-encoded private key for private_key_jwt authentication.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					Sensitive: true,
+				},
+			},
+			"private_key_id": {
+				Type:        framework.TypeString,
+				Description: "Key ID (kid) to include in JWT headers. Must match the key registered in PingFederate.",
+			},
+			"signing_algorithm": {
+				Type:        framework.TypeString,
+				Description: "JWT signing algorithm. One of: RS256, RS384, RS512, ES256, ES384, ES512, PS256, PS384, PS512. Defaults to RS256.",
 			},
 			"url": {
 				Type:        framework.TypeString,
@@ -95,10 +117,22 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 		return nil, nil
 	}
 
+	authMethod := cfg.AuthMethod
+	if authMethod == "" {
+		authMethod = "client_secret"
+	}
+
 	data := map[string]any{
-		"client_id": cfg.ClientID,
-		"url":       cfg.URL,
-		"token_url": cfg.TokenURL,
+		"auth_method": authMethod,
+		"client_id":   cfg.ClientID,
+		"url":         cfg.URL,
+		"token_url":   cfg.TokenURL,
+	}
+	if cfg.SigningAlgorithm != "" {
+		data["signing_algorithm"] = cfg.SigningAlgorithm
+	}
+	if cfg.PrivateKeyID != "" {
+		data["private_key_id"] = cfg.PrivateKeyID
 	}
 	if cfg.DefaultTTL > 0 {
 		data["default_ttl"] = int64(cfg.DefaultTTL.Seconds())
@@ -121,11 +155,23 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		cfg = &pingFederateConfig{}
 	}
 
+	if v, ok := d.GetOk("auth_method"); ok {
+		cfg.AuthMethod, _ = v.(string)
+	}
 	if clientID, ok := d.GetOk("client_id"); ok {
 		cfg.ClientID, _ = clientID.(string)
 	}
 	if clientSecret, ok := d.GetOk("client_secret"); ok {
 		cfg.ClientSecret, _ = clientSecret.(string)
+	}
+	if v, ok := d.GetOk("private_key"); ok {
+		cfg.PrivateKey, _ = v.(string)
+	}
+	if v, ok := d.GetOk("private_key_id"); ok {
+		cfg.PrivateKeyID, _ = v.(string)
+	}
+	if v, ok := d.GetOk("signing_algorithm"); ok {
+		cfg.SigningAlgorithm, _ = v.(string)
 	}
 	if rawURL, ok := d.GetOk("url"); ok {
 		cfg.URL, _ = rawURL.(string)
@@ -147,14 +193,40 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	if cfg.ClientID == "" {
 		return logical.ErrorResponse("client_id is required"), nil
 	}
-	if cfg.ClientSecret == "" {
-		return logical.ErrorResponse("client_secret is required"), nil
-	}
 	if cfg.URL == "" {
 		return logical.ErrorResponse("url is required"), nil
 	}
 	if cfg.TokenURL == "" {
 		return logical.ErrorResponse("token_url is required"), nil
+	}
+
+	switch cfg.AuthMethod {
+	case "", "client_secret":
+		if cfg.ClientSecret == "" {
+			return logical.ErrorResponse("client_secret is required when auth_method is client_secret"), nil
+		}
+	case "private_key_jwt":
+		if cfg.PrivateKey == "" {
+			return logical.ErrorResponse("private_key is required when auth_method is private_key_jwt"), nil
+		}
+		if cfg.PrivateKeyID == "" {
+			return logical.ErrorResponse("private_key_id is required when auth_method is private_key_jwt"), nil
+		}
+		if cfg.SigningAlgorithm == "" {
+			cfg.SigningAlgorithm = "RS256"
+		}
+		if _, err := algorithmToJose(cfg.SigningAlgorithm); err != nil {
+			return logical.ErrorResponse("invalid signing_algorithm: %s", err), nil
+		}
+		key, err := parsePrivateKey(cfg.PrivateKey)
+		if err != nil {
+			return logical.ErrorResponse("invalid private_key: %s", err), nil
+		}
+		if err := validateKeyAlgorithmMatch(key, cfg.SigningAlgorithm); err != nil {
+			return logical.ErrorResponse("%s", err), nil
+		}
+	default:
+		return logical.ErrorResponse("auth_method must be \"client_secret\" or \"private_key_jwt\""), nil
 	}
 
 	entry, err := logical.StorageEntryJSON("config", cfg)

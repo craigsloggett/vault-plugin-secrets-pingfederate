@@ -91,7 +91,11 @@ func (b *pingFederateBackend) getClient(ctx context.Context, s logical.Storage) 
 		return nil, fmt.Errorf("backend not configured")
 	}
 
-	b.client = newPingFederateClient(cfg)
+	if cfg.AuthMethod == "private_key_jwt" {
+		b.client = newPingFederateJWTClient(cfg)
+	} else {
+		b.client = newPingFederateClient(cfg)
+	}
 	return b.client, nil
 }
 

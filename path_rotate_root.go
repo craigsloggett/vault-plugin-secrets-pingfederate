@@ -38,6 +38,13 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 		return logical.ErrorResponse("backend not configured"), nil
 	}
 
+	if cfg.AuthMethod == "private_key_jwt" {
+		return logical.ErrorResponse(
+			"root rotation is not supported for private_key_jwt auth; " +
+				"generate a new key pair and update the config manually",
+		), nil
+	}
+
 	client, err := b.getClient(ctx, req.Storage)
 	if err != nil {
 		return nil, err
