@@ -23,6 +23,9 @@ func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 	return []*framework.Path{
 		{
 			Pattern: "static-roles/" + framework.GenericNameRegex("name"),
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "ping-federate",
+			},
 			Fields: map[string]*framework.FieldSchema{
 				"name": {
 					Type:        framework.TypeLowerCaseString,
@@ -51,15 +54,31 @@ func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: b.staticRoleConfigReadOperation,
+					Summary:  "Read a static role.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "static-role",
+					},
 				},
 				logical.CreateOperation: &framework.PathOperation{
 					Callback: b.staticRoleWriteOperation,
+					Summary:  "Create or update a static role.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "static-role",
+					},
 				},
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.staticRoleWriteOperation,
+					Summary:  "Create or update a static role.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "static-role",
+					},
 				},
 				logical.DeleteOperation: &framework.PathOperation{
 					Callback: b.staticRoleDeleteOperation,
+					Summary:  "Delete a static role.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "static-role",
+					},
 				},
 			},
 			HelpSynopsis:    "Manage static roles for PingFederate credential generation.",
@@ -67,9 +86,16 @@ func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 		},
 		{
 			Pattern: "static-roles/?$",
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "ping-federate",
+			},
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.staticRoleListOperation,
+					Summary:  "List static roles.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "static-roles",
+					},
 				},
 			},
 			HelpSynopsis:    "List existing static roles.",
@@ -77,6 +103,9 @@ func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 		},
 		{
 			Pattern: "static-creds/" + framework.GenericNameRegex("name"),
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "ping-federate",
+			},
 			Fields: map[string]*framework.FieldSchema{
 				"name": {
 					Type:        framework.TypeLowerCaseString,
@@ -87,6 +116,10 @@ func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: b.staticCredsReadOperation,
+					Summary:  "Retrieve a bearer token for a static role.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "static-credentials",
+					},
 				},
 			},
 			HelpSynopsis:    "Retrieve credentials for a static role.",
