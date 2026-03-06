@@ -40,6 +40,9 @@ func backend() *pingFederateBackend {
 			Root: []string{
 				"rotate-root",
 			},
+			Unauthenticated: []string{
+				"jwks",
+			},
 			SealWrapStorage: []string{
 				"config",
 			},
@@ -47,6 +50,7 @@ func backend() *pingFederateBackend {
 		Paths: framework.PathAppend(
 			[]*framework.Path{
 				pathConfig(b),
+				pathJWKS(b),
 				pathRotateRoot(b),
 			},
 			pathStaticRoles(b),

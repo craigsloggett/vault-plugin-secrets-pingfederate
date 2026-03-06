@@ -1304,3 +1304,166 @@ func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
 		t.Fatal("expected no rotation for role without rotation_period")
 	}
 }
+
+// --- JWKS Tests ---
+
+func TestJWKSNotConfigured(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "jwks",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	keys, ok := resp.Data["keys"].([]any)
+	if !ok {
+		t.Fatalf("expected keys to be []any, got %T", resp.Data["keys"])
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected empty keys array, got %d keys", len(keys))
+	}
+}
+
+func TestJWKSClientSecretAuth(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "jwks",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	keys, ok := resp.Data["keys"].([]any)
+	if !ok {
+		t.Fatalf("expected keys to be []any, got %T", resp.Data["keys"])
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected empty keys for client_secret auth, got %d keys", len(keys))
+	}
+}
+
+func TestJWKSPrivateKeyJWTRSA(t *testing.T) {
+	b, storage := newTestBackend(t)
+	writeTestJWTConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "jwks",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	keys, ok := resp.Data["keys"].([]any)
+	if !ok {
+		t.Fatalf("expected keys to be []any, got %T", resp.Data["keys"])
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+
+	key, ok := keys[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected key to be map[string]any, got %T", keys[0])
+	}
+	if key["kty"] != "RSA" {
+		t.Fatalf("expected kty RSA, got %v", key["kty"])
+	}
+	if key["kid"] != "key-1" {
+		t.Fatalf("expected kid key-1, got %v", key["kid"])
+	}
+	if key["alg"] != "RS256" {
+		t.Fatalf("expected alg RS256, got %v", key["alg"])
+	}
+	if key["use"] != "sig" {
+		t.Fatalf("expected use sig, got %v", key["use"])
+	}
+
+	if resp.Data[logical.HTTPContentType] != "application/json" {
+		t.Fatalf("expected application/json content type, got %v", resp.Data[logical.HTTPContentType])
+	}
+	rawBody, ok := resp.Data[logical.HTTPRawBody].([]byte)
+	if !ok {
+		t.Fatalf("expected http_raw_body to be []byte, got %T", resp.Data[logical.HTTPRawBody])
+	}
+	if len(rawBody) == 0 {
+		t.Fatal("expected non-empty raw body")
+	}
+}
+
+func TestJWKSPrivateKeyJWTEC(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testECPrivateKeyPEM(t),
+			"private_key_id":    "ec-key-1",
+			"signing_algorithm": "ES256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "jwks",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	keys, ok := resp.Data["keys"].([]any)
+	if !ok {
+		t.Fatalf("expected keys to be []any, got %T", resp.Data["keys"])
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+
+	key, ok := keys[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected key to be map[string]any, got %T", keys[0])
+	}
+	if key["kty"] != "EC" {
+		t.Fatalf("expected kty EC, got %v", key["kty"])
+	}
+	if key["kid"] != "ec-key-1" {
+		t.Fatalf("expected kid ec-key-1, got %v", key["kid"])
+	}
+	if key["alg"] != "ES256" {
+		t.Fatalf("expected alg ES256, got %v", key["alg"])
+	}
+}
