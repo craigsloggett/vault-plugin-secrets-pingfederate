@@ -263,7 +263,9 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		return nil, fmt.Errorf("failed to write config to storage: %w", err)
 	}
 
-	return nil, nil
+	resp := &logical.Response{}
+	resp.AddWarning("This plugin is currently in beta. Interfaces and behavior may change in future releases.")
+	return resp, nil
 }
 
 func configDeleteOperation(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
