@@ -12,11 +12,19 @@ import (
 func pathRotateRoot(b *pingFederateBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "rotate-root",
+		DisplayAttrs: &framework.DisplayAttributes{
+			OperationPrefix: "ping-federate",
+		},
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.UpdateOperation: &framework.PathOperation{
 				Callback:                    b.rotateRootOperation,
 				ForwardPerformanceStandby:   true,
 				ForwardPerformanceSecondary: true,
+				Summary:                     "Rotate the root credentials for the PingFederate connection.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationVerb:   "rotate",
+					OperationSuffix: "root-credentials",
+				},
 			},
 		},
 		HelpSynopsis:    "Rotate the root credentials for the PingFederate connection.",

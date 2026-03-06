@@ -27,6 +27,9 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 	return &framework.Path{
 		Pattern:        "config",
 		ExistenceCheck: configExistenceCheck,
+		DisplayAttrs: &framework.DisplayAttributes{
+			OperationPrefix: "ping-federate",
+		},
 		Fields: map[string]*framework.FieldSchema{
 			"auth_method": {
 				Type:        framework.TypeString,
@@ -84,15 +87,31 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
 				Callback: configReadOperation,
+				Summary:  "Read the PingFederate connection configuration.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationSuffix: "configuration",
+				},
 			},
 			logical.CreateOperation: &framework.PathOperation{
 				Callback: configWriteOperation,
+				Summary:  "Configure the PingFederate connection.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationVerb: "configure",
+				},
 			},
 			logical.UpdateOperation: &framework.PathOperation{
 				Callback: configWriteOperation,
+				Summary:  "Configure the PingFederate connection.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationVerb: "configure",
+				},
 			},
 			logical.DeleteOperation: &framework.PathOperation{
 				Callback: configDeleteOperation,
+				Summary:  "Delete the PingFederate connection configuration.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationSuffix: "configuration",
+				},
 			},
 		},
 		HelpSynopsis:    "Configure the PingFederate connection.",
