@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -1465,5 +1468,269 @@ func TestJWKSPrivateKeyJWTEC(t *testing.T) {
 	}
 	if key["alg"] != "ES256" {
 		t.Fatalf("expected alg ES256, got %v", key["alg"])
+	}
+}
+
+// --- Token Brokering Tests ---
+
+func newTestBackendWithEntity(t *testing.T, entityID string, metadata map[string]string) (*pingFederateBackend, logical.Storage) {
+	t.Helper()
+
+	config := logical.TestBackendConfig()
+	config.StorageView = &logical.InmemStorage{}
+
+	sysView, ok := config.System.(*logical.StaticSystemView)
+	if !ok {
+		t.Fatal("expected StaticSystemView from TestBackendConfig")
+	}
+	sysView.EntityVal = &logical.Entity{
+		ID:       entityID,
+		Name:     "test-entity",
+		Metadata: metadata,
+	}
+
+	b := backend()
+	if err := b.Setup(context.Background(), config); err != nil {
+		t.Fatalf("unable to setup backend: %v", err)
+	}
+
+	return b, config.StorageView
+}
+
+func newMockTokenServer(t *testing.T, validate func(r *http.Request)) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if validate != nil {
+			validate(r)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(AccessTokenResponse{
+			AccessToken: "brokered-jwt-token",
+			TokenType:   "Bearer",
+			ExpiresIn:   7200,
+		}); err != nil {
+			t.Fatalf("failed to encode response: %v", err)
+		}
+	}))
+}
+
+func TestTokenReadWithoutConfig(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-123", nil)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for unconfigured backend")
+	}
+}
+
+func TestTokenReadWithoutEntityID(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-123", nil)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing entity ID")
+	}
+}
+
+func TestTokenReadBasicAuth(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-abc-123", map[string]string{
+		"team": "platform",
+		"env":  "prod",
+	})
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "admin-client" || pass != "admin-secret" {
+			t.Fatalf("expected Basic Auth admin-client:admin-secret, got %s:%s (ok=%v)", user, pass, ok)
+		}
+
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("vault_entity_id") != "entity-abc-123" {
+			t.Fatalf("expected vault_entity_id=entity-abc-123, got %q", r.FormValue("vault_entity_id"))
+		}
+		if r.FormValue("team") != "platform" {
+			t.Fatalf("expected team=platform, got %q", r.FormValue("team"))
+		}
+		if r.FormValue("env") != "prod" {
+			t.Fatalf("expected env=prod, got %q", r.FormValue("env"))
+		}
+	})
+	defer server.Close()
+
+	// Write config with token_url pointing to mock server.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-abc-123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if resp.Data["access_token"] != "brokered-jwt-token" {
+		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
+	}
+	if resp.Data["token_type"] != "Bearer" {
+		t.Fatalf("expected token_type=Bearer, got %v", resp.Data["token_type"])
+	}
+}
+
+func TestTokenReadJWTAuth(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-jwt-789", map[string]string{
+		"app": "my-service",
+	})
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if _, _, ok := r.BasicAuth(); ok {
+			t.Fatal("expected no Basic Auth for private_key_jwt")
+		}
+
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("client_assertion_type") != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+			t.Fatalf("unexpected client_assertion_type: %q", r.FormValue("client_assertion_type"))
+		}
+		if r.FormValue("client_assertion") == "" {
+			t.Fatal("expected non-empty client_assertion")
+		}
+		if r.FormValue("client_id") != "jwt-admin-client" {
+			t.Fatalf("expected client_id=jwt-admin-client, got %q", r.FormValue("client_id"))
+		}
+		if r.FormValue("vault_entity_id") != "entity-jwt-789" {
+			t.Fatalf("expected vault_entity_id=entity-jwt-789, got %q", r.FormValue("vault_entity_id"))
+		}
+		if r.FormValue("app") != "my-service" {
+			t.Fatalf("expected app=my-service, got %q", r.FormValue("app"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-jwt-789",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if resp.Data["access_token"] != "brokered-jwt-token" {
+		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
+	}
+}
+
+func TestTokenWriteWithScope(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-scope-1", nil)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("scope") != "openid profile" {
+			t.Fatalf("expected scope='openid profile', got %q", r.FormValue("scope"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-scope-1",
+		Data: map[string]any{
+			"scope": "openid profile",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if resp.Data["access_token"] != "brokered-jwt-token" {
+		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
 	}
 }

@@ -52,6 +52,7 @@ func backend() *pingFederateBackend {
 				pathConfig(b),
 				pathJWKS(b),
 				pathRotateRoot(b),
+				pathToken(b),
 			},
 			pathStaticRoles(b),
 		),

@@ -33,7 +33,7 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 		Fields: map[string]*framework.FieldSchema{
 			"auth_method": {
 				Type:        framework.TypeString,
-				Description: `Authentication method for the PingFederate admin API: "client_secret" or "private_key_jwt". Defaults to "client_secret".`,
+				Description: `Authentication method for PingFederate: "client_secret" or "private_key_jwt". Defaults to "client_secret".`,
 			},
 			"client_id": {
 				Type:        framework.TypeString,
@@ -115,7 +115,7 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 			},
 		},
 		HelpSynopsis:    "Configure the PingFederate connection.",
-		HelpDescription: "Configure the connection credentials and URL for the PingFederate admin API.",
+		HelpDescription: "Configure the connection credentials and URLs for PingFederate.",
 	}
 }
 
