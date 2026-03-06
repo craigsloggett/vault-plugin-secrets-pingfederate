@@ -2,6 +2,7 @@ package pingfederate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -12,7 +13,9 @@ import (
 type pingFederateBackend struct {
 	*framework.Backend
 
-	lock sync.RWMutex
+	lock           sync.RWMutex
+	client         PingFederateClient
+	rotateRootLock int32
 }
 
 // Factory returns a configured instance of the backend.
@@ -32,6 +35,9 @@ func backend() *pingFederateBackend {
 	b.Backend = &framework.Backend{
 		Help: strings.TrimSpace(backendHelp),
 		PathsSpecial: &logical.Paths{
+			Root: []string{
+				"rotate-root",
+			},
 			SealWrapStorage: []string{
 				"config",
 			},
@@ -39,8 +45,9 @@ func backend() *pingFederateBackend {
 		Paths: framework.PathAppend(
 			[]*framework.Path{
 				pathConfig(b),
+				pathRotateRoot(b),
 			},
-			pathRoles(b),
+			pathStaticRoles(b),
 		),
 		BackendType: logical.TypeLogical,
 		Invalidate:  b.invalidate,
@@ -58,6 +65,34 @@ func (b *pingFederateBackend) invalidate(_ context.Context, key string) {
 func (b *pingFederateBackend) reset() {
 	b.lock.Lock()
 	defer b.lock.Unlock()
+	b.client = nil
+}
+
+func (b *pingFederateBackend) getClient(ctx context.Context, s logical.Storage) (PingFederateClient, error) {
+	b.lock.RLock()
+	if b.client != nil {
+		defer b.lock.RUnlock()
+		return b.client, nil
+	}
+	b.lock.RUnlock()
+
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	if b.client != nil {
+		return b.client, nil
+	}
+
+	cfg, err := getConfig(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("backend not configured")
+	}
+
+	b.client = newPingFederateClient(cfg)
+	return b.client, nil
 }
 
 const backendHelp = `
