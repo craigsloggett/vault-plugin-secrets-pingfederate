@@ -72,11 +72,13 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 		return nil, fmt.Errorf("failed to obtain brokered token: %w", err)
 	}
 
-	return &logical.Response{
+	resp := &logical.Response{
 		Data: map[string]any{
 			"access_token": tokenResp.AccessToken,
 			"token_type":   tokenResp.TokenType,
 			"expires_in":   tokenResp.ExpiresIn,
 		},
-	}, nil
+	}
+	resp.AddWarning("This plugin is currently in beta. Interfaces and behavior may change in future releases.")
+	return resp, nil
 }
