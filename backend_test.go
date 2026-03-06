@@ -830,10 +830,10 @@ func TestConfigWriteJWTMissingKeyID(t *testing.T) {
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method": "private_key_jwt",
-			"client_id":    "jwt-admin-client",
-			"private_key":  testRSAPrivateKeyPEM(t),
-			"url":          "https://pingfederate.example.com:9999",
-			"token_url":    "https://pingfederate.example.com:9031/as/token.oauth2",
+			"client_id":   "jwt-admin-client",
+			"private_key": testRSAPrivateKeyPEM(t),
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
 		},
 	})
 	if err != nil {
@@ -926,11 +926,11 @@ func TestConfigWriteInvalidAuthMethod(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method":    "invalid_method",
-			"client_id":      "admin-client",
-			"client_secret":  "admin-secret",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":   "invalid_method",
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     "https://pingfederate.example.com:9031/as/token.oauth2",
 		},
 	})
 	if err != nil {
@@ -938,6 +938,79 @@ func TestConfigWriteInvalidAuthMethod(t *testing.T) {
 	}
 	if resp == nil || !resp.IsError() {
 		t.Fatal("expected error response for invalid auth_method")
+	}
+}
+
+func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Start with client_secret auth.
+	writeTestConfig(t, b, storage)
+
+	// Switch to private_key_jwt.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"signing_algorithm": "RS256",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify client_secret was cleared from storage.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientSecret != "" {
+		t.Fatal("expected client_secret to be cleared after switching to private_key_jwt")
+	}
+	if cfg.PrivateKey == "" {
+		t.Fatal("expected private_key to be set")
+	}
+
+	// Switch back to client_secret.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":   "client_secret",
+			"client_secret": "new-secret",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify JWT fields were cleared from storage.
+	cfg, err = getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PrivateKey != "" {
+		t.Fatal("expected private_key to be cleared after switching to client_secret")
+	}
+	if cfg.PrivateKeyID != "" {
+		t.Fatal("expected private_key_id to be cleared after switching to client_secret")
+	}
+	if cfg.SigningAlgorithm != "" {
+		t.Fatal("expected signing_algorithm to be cleared after switching to client_secret")
+	}
+	if cfg.ClientSecret != "new-secret" {
+		t.Fatalf("expected client_secret 'new-secret', got %q", cfg.ClientSecret)
 	}
 }
 

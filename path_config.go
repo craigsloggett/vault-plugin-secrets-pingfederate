@@ -205,6 +205,10 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		if cfg.ClientSecret == "" {
 			return logical.ErrorResponse("client_secret is required when auth_method is client_secret"), nil
 		}
+		// Clear JWT fields so stale sensitive material doesn't persist.
+		cfg.PrivateKey = ""
+		cfg.PrivateKeyID = ""
+		cfg.SigningAlgorithm = ""
 	case "private_key_jwt":
 		if cfg.PrivateKey == "" {
 			return logical.ErrorResponse("private_key is required when auth_method is private_key_jwt"), nil
@@ -225,6 +229,8 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		if err := validateKeyAlgorithmMatch(key, cfg.SigningAlgorithm); err != nil {
 			return logical.ErrorResponse("%s", err), nil
 		}
+		// Clear client_secret so stale sensitive material doesn't persist.
+		cfg.ClientSecret = ""
 	default:
 		return logical.ErrorResponse("auth_method must be \"client_secret\" or \"private_key_jwt\""), nil
 	}

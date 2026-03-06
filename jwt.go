@@ -60,12 +60,12 @@ func buildJWTAssertion(clientID, audience, keyID, signingAlgorithm, privateKeyPE
 
 	now := time.Now()
 	claims := jwt.Claims{
-		Issuer:    clientID,
-		Subject:   clientID,
-		Audience:  jwt.Audience{audience},
-		Expiry:    jwt.NewNumericDate(now.Add(5 * time.Minute)),
-		IssuedAt:  jwt.NewNumericDate(now),
-		ID:        jti,
+		Issuer:   clientID,
+		Subject:  clientID,
+		Audience: jwt.Audience{audience},
+		Expiry:   jwt.NewNumericDate(now.Add(5 * time.Minute)),
+		IssuedAt: jwt.NewNumericDate(now),
+		ID:       jti,
 	}
 
 	token, err := jwt.Signed(signer).Claims(claims).Serialize()

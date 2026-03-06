@@ -55,18 +55,16 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 		return nil, fmt.Errorf("failed to rotate root credentials in PingFederate: %w", err)
 	}
 
-	oldSecret := cfg.ClientSecret
 	cfg.ClientSecret = newSecret
 
 	entry, err := logical.StorageEntryJSON("config", cfg)
 	if err != nil {
-		// Attempt rollback: we changed the secret in PingFederate but can't persist it.
-		b.rollbackRootRotation(ctx, req.Storage, cfg.ClientID, oldSecret, newSecret)
+		b.logRootRotationFailure(cfg.ClientID)
 		return nil, fmt.Errorf("failed to create storage entry: %w", err)
 	}
 
 	if err := req.Storage.Put(ctx, entry); err != nil {
-		b.rollbackRootRotation(ctx, req.Storage, cfg.ClientID, oldSecret, newSecret)
+		b.logRootRotationFailure(cfg.ClientID)
 		return nil, fmt.Errorf("failed to write updated config to storage: %w", err)
 	}
 
@@ -77,22 +75,11 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 	return resp, nil
 }
 
-// rollbackRootRotation attempts to restore the old secret in PingFederate after a failed storage write.
-func (b *pingFederateBackend) rollbackRootRotation(ctx context.Context, s logical.Storage, clientID, oldSecret, newSecret string) {
-	// Build a temporary client using the new secret (since PingFederate already accepted the rotation).
-	cfg, err := getConfig(ctx, s)
-	if err != nil || cfg == nil {
-		return
-	}
-
-	tmpCfg := *cfg
-	tmpCfg.ClientSecret = newSecret
-	tmpClient := newPingFederateClient(&tmpCfg)
-
-	// We can't easily restore an exact old secret via the admin API (PUT generates a new one).
-	// Log the situation so an operator can investigate.
-	_ = tmpClient
-	_ = oldSecret
+// logRootRotationFailure logs an error when the rotated secret was accepted by
+// PingFederate but could not be persisted to Vault storage. The PingFederate
+// admin API does not support setting a specific secret (PUT generates a new
+// one), so automatic rollback is not possible.
+func (b *pingFederateBackend) logRootRotationFailure(clientID string) {
 	b.Logger().Error("failed to persist rotated root credentials; PingFederate has the new secret but Vault does not",
 		"client_id", clientID,
 		"action_required", "manually update the plugin config with the current PingFederate credentials",
