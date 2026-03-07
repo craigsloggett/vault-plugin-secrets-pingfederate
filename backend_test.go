@@ -20,16 +20,8 @@ import (
 
 // mockPingFederateClient implements PingFederateClient for testing.
 type mockPingFederateClient struct {
-	getClientSecretFunc    func(ctx context.Context, clientID string) (string, error)
 	updateClientSecretFunc func(ctx context.Context, clientID string) (string, error)
 	getAccessTokenFunc     func(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error)
-}
-
-func (m *mockPingFederateClient) GetClientSecret(ctx context.Context, clientID string) (string, error) {
-	if m.getClientSecretFunc != nil {
-		return m.getClientSecretFunc(ctx, clientID)
-	}
-	return "mock-secret", nil
 }
 
 func (m *mockPingFederateClient) UpdateClientSecret(ctx context.Context, clientID string) (string, error) {
@@ -595,7 +587,7 @@ func TestStaticCredsReadClientError(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	b.client = &mockPingFederateClient{
-		getClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
 			return "", fmt.Errorf("PingFederate unavailable")
 		},
 	}

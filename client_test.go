@@ -8,112 +8,8 @@ import (
 	"testing"
 )
 
-func TestGetClientSecret(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("expected GET, got %s", r.Method)
-		}
-		if r.URL.Path != "/pf-admin-api/v1/oauth/clients/test-client/clientAuth/clientSecret" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != "admin" || pass != "admin-secret" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if r.Header.Get("X-XSRF-Header") != "PingFederate" {
-			t.Fatal("missing X-XSRF-Header")
-		}
-
-		resp := clientSecretResponse{Secret: "the-secret"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	client := &pingFederateClient{
-		adminURL:             server.URL,
-		footholdClientID:     "admin",
-		footholdClientSecret: "admin-secret",
-		httpClient:           server.Client(),
-	}
-
-	secret, err := client.GetClientSecret(context.Background(), "test-client")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if secret != "the-secret" {
-		t.Fatalf("expected 'the-secret', got %q", secret)
-	}
-}
-
-func TestGetClientSecretUnauthorized(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"unauthorized"}`))
-	}))
-	defer server.Close()
-
-	client := &pingFederateClient{
-		adminURL:             server.URL,
-		footholdClientID:     "bad",
-		footholdClientSecret: "bad",
-		httpClient:           server.Client(),
-	}
-
-	_, err := client.GetClientSecret(context.Background(), "test-client")
-	if err == nil {
-		t.Fatal("expected error for unauthorized request")
-	}
-}
-
-func TestGetClientSecretNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"not found"}`))
-	}))
-	defer server.Close()
-
-	client := &pingFederateClient{
-		adminURL:             server.URL,
-		footholdClientID:     "admin",
-		footholdClientSecret: "admin-secret",
-		httpClient:           server.Client(),
-	}
-
-	_, err := client.GetClientSecret(context.Background(), "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent client")
-	}
-}
-
-func TestGetClientSecretEncryptedOnly(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := clientSecretResponse{EncryptedSecret: "OBF:encrypted-value"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	client := &pingFederateClient{
-		adminURL:             server.URL,
-		footholdClientID:     "admin",
-		footholdClientSecret: "admin-secret",
-		httpClient:           server.Client(),
-	}
-
-	_, err := client.GetClientSecret(context.Background(), "test-client")
-	if err == nil {
-		t.Fatal("expected error when only encrypted secret is returned")
-	}
-}
-
 func TestUpdateClientSecret(t *testing.T) {
+	var receivedSecret string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Fatalf("expected PUT, got %s", r.Method)
@@ -134,11 +30,17 @@ func TestUpdateClientSecret(t *testing.T) {
 			return
 		}
 
-		resp := clientSecretResponse{Secret: "new-rotated-secret"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("failed to encode response: %v", err)
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
 		}
+		receivedSecret = body["secret"]
+		if receivedSecret == "" {
+			t.Fatal("expected secret in request body")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"encryptedSecret":"OBF:encrypted"}`))
 	}))
 	defer server.Close()
 
@@ -153,8 +55,11 @@ func TestUpdateClientSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if secret != "new-rotated-secret" {
-		t.Fatalf("expected 'new-rotated-secret', got %q", secret)
+	if secret == "" {
+		t.Fatal("expected non-empty secret")
+	}
+	if secret != receivedSecret {
+		t.Fatalf("returned secret %q does not match sent secret %q", secret, receivedSecret)
 	}
 }
 

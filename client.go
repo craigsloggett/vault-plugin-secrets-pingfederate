@@ -2,6 +2,8 @@ package pingfederate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,13 +12,19 @@ import (
 	"strings"
 )
 
+// generateRandomSecret creates a cryptographically random 32-byte hex-encoded secret.
+func generateRandomSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // PingFederateClient defines the interface for interacting with PingFederate.
 type PingFederateClient interface {
-	// GetClientSecret retrieves an OAuth client's secret via the admin API.
-	GetClientSecret(ctx context.Context, clientID string) (string, error)
-
 	// UpdateClientSecret rotates an OAuth client's secret via the admin API.
-	// Returns the new plaintext secret.
+	// Generates a new secret, sets it in PingFederate, and returns the plaintext.
 	UpdateClientSecret(ctx context.Context, clientID string) (string, error)
 
 	// GetAccessToken obtains a bearer token via the client_credentials grant.
@@ -28,12 +36,6 @@ type AccessTokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int    `json:"expires_in"`
-}
-
-// clientSecretResponse represents the PingFederate admin API client secret response.
-type clientSecretResponse struct {
-	Secret          string `json:"secret,omitempty"`
-	EncryptedSecret string `json:"encryptedSecret,omitempty"`
 }
 
 type pingFederateClient struct {
@@ -54,50 +56,17 @@ func newPingFederateClient(cfg *pingFederateConfig) *pingFederateClient {
 	}
 }
 
-func (c *pingFederateClient) GetClientSecret(ctx context.Context, clientID string) (string, error) {
-	reqURL := fmt.Sprintf("%s/pf-admin-api/v1/oauth/clients/%s/clientAuth/clientSecret",
-		c.adminURL, url.PathEscape(clientID))
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.footholdClientID, c.footholdClientSecret)
-	req.Header.Set("X-XSRF-Header", "PingFederate")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to get client secret: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("PingFederate admin API returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var secretResp clientSecretResponse
-	if err := json.Unmarshal(body, &secretResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if secretResp.Secret == "" {
-		return "", fmt.Errorf("PingFederate returned empty secret for client %s (may only have encrypted secret)", clientID)
-	}
-
-	return secretResp.Secret, nil
-}
-
 func (c *pingFederateClient) UpdateClientSecret(ctx context.Context, clientID string) (string, error) {
+	newSecret, err := generateRandomSecret()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate new secret: %w", err)
+	}
+
 	reqURL := fmt.Sprintf("%s/pf-admin-api/v1/oauth/clients/%s/clientAuth/clientSecret",
 		c.adminURL, url.PathEscape(clientID))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, strings.NewReader("{}"))
+	payload := fmt.Sprintf(`{"secret":%q}`, newSecret)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, strings.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -121,16 +90,7 @@ func (c *pingFederateClient) UpdateClientSecret(ctx context.Context, clientID st
 		return "", fmt.Errorf("PingFederate admin API returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var secretResp clientSecretResponse
-	if err := json.Unmarshal(body, &secretResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if secretResp.Secret == "" {
-		return "", fmt.Errorf("PingFederate returned empty secret after rotation for client %s", clientID)
-	}
-
-	return secretResp.Secret, nil
+	return newSecret, nil
 }
 
 func (c *pingFederateClient) GetAccessToken(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error) {

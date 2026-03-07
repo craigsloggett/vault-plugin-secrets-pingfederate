@@ -13,94 +13,10 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
-func TestJWTGetClientSecret(t *testing.T) {
-	rsaKey, rsaPEM := generateTestRSAKey(t)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("expected GET, got %s", r.Method)
-		}
-		if r.URL.Path != "/pf-admin-api/v1/oauth/clients/test-client/clientAuth/clientSecret" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		// Verify JWT Bearer auth.
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			t.Fatalf("expected Bearer auth, got %q", authHeader)
-		}
-		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-
-		parsed, err := jwt.ParseSigned(tokenStr, []jose.SignatureAlgorithm{jose.RS256})
-		if err != nil {
-			t.Fatalf("failed to parse JWT: %v", err)
-		}
-
-		var claims jwt.Claims
-		if err := parsed.Claims(&rsaKey.PublicKey, &claims); err != nil {
-			t.Fatalf("failed to verify JWT: %v", err)
-		}
-		if claims.Issuer != "jwt-admin" {
-			t.Fatalf("expected issuer %q, got %q", "jwt-admin", claims.Issuer)
-		}
-
-		if r.Header.Get("X-XSRF-Header") != "PingFederate" {
-			t.Fatal("missing X-XSRF-Header")
-		}
-
-		resp := clientSecretResponse{Secret: "the-secret"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	client := &pingFederateJWTClient{
-		adminURL:         server.URL,
-		clientID:         "jwt-admin",
-		privateKeyPEM:    rsaPEM,
-		privateKeyID:     "key-1",
-		signingAlgorithm: "RS256",
-		httpClient:       server.Client(),
-	}
-
-	secret, err := client.GetClientSecret(context.Background(), "test-client")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if secret != "the-secret" {
-		t.Fatalf("expected 'the-secret', got %q", secret)
-	}
-}
-
-func TestJWTGetClientSecretUnauthorized(t *testing.T) {
-	_, rsaPEM := generateTestRSAKey(t)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"unauthorized"}`))
-	}))
-	defer server.Close()
-
-	client := &pingFederateJWTClient{
-		adminURL:         server.URL,
-		clientID:         "jwt-admin",
-		privateKeyPEM:    rsaPEM,
-		privateKeyID:     "key-1",
-		signingAlgorithm: "RS256",
-		httpClient:       server.Client(),
-	}
-
-	_, err := client.GetClientSecret(context.Background(), "test-client")
-	if err == nil {
-		t.Fatal("expected error for unauthorized request")
-	}
-}
-
 func TestJWTUpdateClientSecret(t *testing.T) {
 	rsaKey, rsaPEM := generateTestRSAKey(t)
 
+	var receivedSecret string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Fatalf("expected PUT, got %s", r.Method)
@@ -129,11 +45,17 @@ func TestJWTUpdateClientSecret(t *testing.T) {
 			t.Fatalf("failed to verify JWT: %v", err)
 		}
 
-		resp := clientSecretResponse{Secret: "new-rotated-secret"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("failed to encode response: %v", err)
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
 		}
+		receivedSecret = body["secret"]
+		if receivedSecret == "" {
+			t.Fatal("expected secret in request body")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"encryptedSecret":"OBF:encrypted"}`))
 	}))
 	defer server.Close()
 
@@ -150,8 +72,35 @@ func TestJWTUpdateClientSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if secret != "new-rotated-secret" {
-		t.Fatalf("expected 'new-rotated-secret', got %q", secret)
+	if secret == "" {
+		t.Fatal("expected non-empty secret")
+	}
+	if secret != receivedSecret {
+		t.Fatalf("returned secret %q does not match sent secret %q", secret, receivedSecret)
+	}
+}
+
+func TestJWTUpdateClientSecretUnauthorized(t *testing.T) {
+	_, rsaPEM := generateTestRSAKey(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"unauthorized"}`))
+	}))
+	defer server.Close()
+
+	client := &pingFederateJWTClient{
+		adminURL:         server.URL,
+		clientID:         "jwt-admin",
+		privateKeyPEM:    rsaPEM,
+		privateKeyID:     "key-1",
+		signingAlgorithm: "RS256",
+		httpClient:       server.Client(),
+	}
+
+	_, err := client.UpdateClientSecret(context.Background(), "test-client")
+	if err == nil {
+		t.Fatal("expected error for unauthorized request")
 	}
 }
 
@@ -216,9 +165,10 @@ func TestJWTGetAccessTokenUsesBasicAuth(t *testing.T) {
 	}
 }
 
-func TestJWTGetClientSecretWithECKey(t *testing.T) {
+func TestJWTUpdateClientSecretWithECKey(t *testing.T) {
 	ecKey, ecPEM := generateTestECKey(t, elliptic.P256())
 
+	var receivedSecret string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
@@ -233,11 +183,14 @@ func TestJWTGetClientSecretWithECKey(t *testing.T) {
 			t.Fatalf("failed to verify JWT: %v", err)
 		}
 
-		resp := clientSecretResponse{Secret: "ec-secret"}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Fatalf("failed to encode response: %v", err)
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
 		}
+		receivedSecret = body["secret"]
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"encryptedSecret":"OBF:encrypted"}`))
 	}))
 	defer server.Close()
 
@@ -250,11 +203,14 @@ func TestJWTGetClientSecretWithECKey(t *testing.T) {
 		httpClient:       server.Client(),
 	}
 
-	secret, err := client.GetClientSecret(context.Background(), "test-client")
+	secret, err := client.UpdateClientSecret(context.Background(), "test-client")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if secret != "ec-secret" {
-		t.Fatalf("expected 'ec-secret', got %q", secret)
+	if secret == "" {
+		t.Fatal("expected non-empty secret")
+	}
+	if secret != receivedSecret {
+		t.Fatalf("returned secret %q does not match sent secret %q", secret, receivedSecret)
 	}
 }
