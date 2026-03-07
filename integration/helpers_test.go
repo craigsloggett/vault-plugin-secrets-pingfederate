@@ -15,12 +15,14 @@ import (
 )
 
 const (
-	pfAdminURL     = "https://localhost:9999"
-	pfTokenURL     = "https://localhost:9031/as/token.oauth2"
-	pluginPath     = "pingfederate"
-	footholdSecret = "test-foothold-secret"
-	testUser       = "integration-test-user"
-	testPassword   = "testpassword"
+	pfAdminURL      = "https://localhost:9999"
+	pfTokenURL      = "https://localhost:9031/as/token.oauth2"
+	pfAdminUser     = "administrator"
+	pfAdminPassword = "2FederateM0re"
+	pluginPath      = "pingfederate"
+	footholdSecret  = "test-foothold-secret"
+	testUser        = "integration-test-user"
+	testPassword    = "testpassword"
 )
 
 // vaultClient returns a Vault API client authenticated with the root token.
@@ -113,13 +115,19 @@ func skipIfNotReady(t *testing.T) {
 		t.Skipf("Vault not reachable: %v", err)
 	}
 
-	// Check PingFederate.
+	// Check PingFederate. PF 13 requires auth and X-XSRF-Header for admin API.
 	httpClient := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test against local self-signed cert
 		},
 	}
-	resp, err := httpClient.Get(pfAdminURL + "/pf-admin-api/v1/version")
+	req, err := http.NewRequest(http.MethodGet, pfAdminURL+"/pf-admin-api/v1/version", nil)
+	if err != nil {
+		t.Skipf("PingFederate request creation failed: %v", err)
+	}
+	req.SetBasicAuth(pfAdminUser, pfAdminPassword)
+	req.Header.Set("X-XSRF-Header", "PingFederate")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		t.Skipf("PingFederate not reachable: %v", err)
 	}
