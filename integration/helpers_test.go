@@ -20,7 +20,7 @@ const (
 	pfAdminUser     = "administrator"
 	pfAdminPassword = "2FederateM0re"
 	pluginPath      = "pingfederate"
-	footholdSecret  = "test-foothold-secret"
+	footholdSecret  = "V4ult-Test0"
 	testUser        = "integration-test-user"
 	testPassword    = "testpassword"
 )
@@ -138,6 +138,8 @@ func skipIfNotReady(t *testing.T) {
 }
 
 // readJWKSRaw performs a raw HTTP GET to the JWKS endpoint (no Vault token).
+// Returns the status code and the JWKS data. If Vault wraps the response in its
+// standard envelope (with a "data" field), the inner data is extracted.
 func readJWKSRaw(t *testing.T) (int, map[string]any) {
 	t.Helper()
 
@@ -146,7 +148,7 @@ func readJWKSRaw(t *testing.T) (int, map[string]any) {
 		addr = "http://127.0.0.1:8200"
 	}
 
-	resp, err := http.Get(addr + "/v1/" + pluginPath + "/jwks")
+	resp, err := http.Get(addr + "/v1/" + pluginPath + "/jwks") //nolint:gosec // test helper with hardcoded local URL
 	if err != nil {
 		t.Fatalf("failed to GET JWKS: %v", err)
 	}
@@ -160,6 +162,11 @@ func readJWKSRaw(t *testing.T) (int, map[string]any) {
 	var result map[string]any
 	if err := json.Unmarshal(body, &result); err != nil {
 		t.Fatalf("failed to parse JWKS response: %v", err)
+	}
+
+	// If Vault returned its standard envelope, extract the inner data.
+	if data, ok := result["data"].(map[string]any); ok {
+		return resp.StatusCode, data
 	}
 
 	return resp.StatusCode, result

@@ -26,6 +26,7 @@ func TestIntegration_ConfigWrite_ClientSecret(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 	})
 
 	secret := readPluginConfig(t, client)
@@ -53,10 +54,11 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_InternalKey(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, client) })
 
 	writePluginConfig(t, client, map[string]any{
-		"client_id":   "vault-foothold-jwt",
-		"auth_method": "private_key_jwt",
-		"url":         pfAdminURL,
-		"token_url":   pfTokenURL,
+		"client_id":    "vault-foothold-jwt",
+		"auth_method":  "private_key_jwt",
+		"url":          pfAdminURL,
+		"token_url":    pfTokenURL,
+		"insecure_tls": true,
 	})
 
 	secret := readPluginConfig(t, client)
@@ -102,6 +104,7 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_ExternalKey(t *testing.T) {
 		"private_key":       string(keyPEM),
 		"url":               pfAdminURL,
 		"token_url":         pfTokenURL,
+		"insecure_tls":      true,
 	})
 
 	secret := readPluginConfig(t, client)
@@ -128,6 +131,7 @@ func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 		"default_ttl":   300,
 	})
 
@@ -170,6 +174,7 @@ func TestIntegration_ConfigDelete(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 	})
 
 	// Delete.
@@ -196,6 +201,7 @@ func TestIntegration_JWKS_EmptyWithClientSecret(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 	})
 
 	secret, err := client.Logical().Read(pluginPath + "/jwks")
@@ -225,10 +231,11 @@ func TestIntegration_JWKS_ReturnsKeyWithPrivateKeyJWT(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, client) })
 
 	writePluginConfig(t, client, map[string]any{
-		"client_id":   "vault-foothold-jwt",
-		"auth_method": "private_key_jwt",
-		"url":         pfAdminURL,
-		"token_url":   pfTokenURL,
+		"client_id":    "vault-foothold-jwt",
+		"auth_method":  "private_key_jwt",
+		"url":          pfAdminURL,
+		"token_url":    pfTokenURL,
+		"insecure_tls": true,
 	})
 
 	// Read the config to get the kid.
@@ -276,10 +283,11 @@ func TestIntegration_JWKS_Unauthenticated(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, client) })
 
 	writePluginConfig(t, client, map[string]any{
-		"client_id":   "vault-foothold-jwt",
-		"auth_method": "private_key_jwt",
-		"url":         pfAdminURL,
-		"token_url":   pfTokenURL,
+		"client_id":    "vault-foothold-jwt",
+		"auth_method":  "private_key_jwt",
+		"url":          pfAdminURL,
+		"token_url":    pfTokenURL,
+		"insecure_tls": true,
 	})
 
 	statusCode, result := readJWKSRaw(t)
@@ -314,6 +322,7 @@ func TestIntegration_TokenBroker_ClientSecret(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 	})
 
 	userClient := vaultUserClient(t)
@@ -345,10 +354,11 @@ func TestIntegration_TokenBroker_PrivateKeyJWT(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
 
 	writePluginConfig(t, rootClient, map[string]any{
-		"client_id":   "vault-foothold-jwt",
-		"auth_method": "private_key_jwt",
-		"url":         pfAdminURL,
-		"token_url":   pfTokenURL,
+		"client_id":    "vault-foothold-jwt",
+		"auth_method":  "private_key_jwt",
+		"url":          pfAdminURL,
+		"token_url":    pfTokenURL,
+		"insecure_tls": true,
 	})
 
 	userClient := vaultUserClient(t)
@@ -377,6 +387,7 @@ func TestIntegration_TokenBroker_WithScope(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 	})
 
 	userClient := vaultUserClient(t)
@@ -408,6 +419,7 @@ func TestIntegration_TokenBroker_NoEntity(t *testing.T) {
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
+		"insecure_tls":  true,
 	})
 
 	// Root token has no entity — should fail.
@@ -435,10 +447,13 @@ func TestIntegration_RotateRoot_ClientSecret(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
 
 	writePluginConfig(t, rootClient, map[string]any{
-		"client_id":     "vault-foothold-secret",
-		"client_secret": footholdSecret,
-		"url":           pfAdminURL,
-		"token_url":     pfTokenURL,
+		"client_id":      "vault-foothold-secret",
+		"client_secret":  footholdSecret,
+		"url":            pfAdminURL,
+		"token_url":      pfTokenURL,
+		"insecure_tls":   true,
+		"admin_username": pfAdminUser,
+		"admin_password": pfAdminPassword,
 	})
 
 	// Rotate.
@@ -468,10 +483,11 @@ func TestIntegration_RotateRoot_PrivateKeyJWT(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
 
 	writePluginConfig(t, rootClient, map[string]any{
-		"client_id":   "vault-foothold-jwt",
-		"auth_method": "private_key_jwt",
-		"url":         pfAdminURL,
-		"token_url":   pfTokenURL,
+		"client_id":    "vault-foothold-jwt",
+		"auth_method":  "private_key_jwt",
+		"url":          pfAdminURL,
+		"token_url":    pfTokenURL,
+		"insecure_tls": true,
 	})
 
 	// Read initial kid.
@@ -521,10 +537,13 @@ func TestIntegration_StaticRole_CRUD(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
 
 	writePluginConfig(t, rootClient, map[string]any{
-		"client_id":     "vault-foothold-secret",
-		"client_secret": footholdSecret,
-		"url":           pfAdminURL,
-		"token_url":     pfTokenURL,
+		"client_id":      "vault-foothold-secret",
+		"client_secret":  footholdSecret,
+		"url":            pfAdminURL,
+		"token_url":      pfTokenURL,
+		"insecure_tls":   true,
+		"admin_username": pfAdminUser,
+		"admin_password": pfAdminPassword,
 	})
 
 	roleName := "test-role"
@@ -631,10 +650,13 @@ func TestIntegration_StaticCreds_RetrieveToken(t *testing.T) {
 	})
 
 	writePluginConfig(t, rootClient, map[string]any{
-		"client_id":     "vault-foothold-secret",
-		"client_secret": footholdSecret,
-		"url":           pfAdminURL,
-		"token_url":     pfTokenURL,
+		"client_id":      "vault-foothold-secret",
+		"client_secret":  footholdSecret,
+		"url":            pfAdminURL,
+		"token_url":      pfTokenURL,
+		"insecure_tls":   true,
+		"admin_username": pfAdminUser,
+		"admin_password": pfAdminPassword,
 	})
 
 	// Create a static role.

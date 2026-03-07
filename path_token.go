@@ -3,7 +3,6 @@ package pingfederate
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -67,7 +66,7 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 
 	scope, _ := d.Get("scope").(string)
 
-	tokenResp, err := getBrokeredToken(ctx, &http.Client{}, cfg, scope, req.EntityID, metadata)
+	tokenResp, err := getBrokeredToken(ctx, newHTTPClient(cfg.InsecureTLS), cfg, scope, req.EntityID, metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain brokered token: %w", err)
 	}

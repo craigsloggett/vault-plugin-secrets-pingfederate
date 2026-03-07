@@ -17,6 +17,8 @@ type pingFederateJWTClient struct {
 	privateKeyPEM    string
 	privateKeyID     string
 	signingAlgorithm string
+	adminUsername    string
+	adminPassword    string
 	httpClient       *http.Client
 }
 
@@ -28,7 +30,9 @@ func newPingFederateJWTClient(cfg *pingFederateConfig) *pingFederateJWTClient {
 		privateKeyPEM:    cfg.PrivateKey,
 		privateKeyID:     cfg.PrivateKeyID,
 		signingAlgorithm: cfg.SigningAlgorithm,
-		httpClient:       &http.Client{},
+		adminUsername:    cfg.AdminUsername,
+		adminPassword:    cfg.AdminPassword,
+		httpClient:       newHTTPClient(cfg.InsecureTLS),
 	}
 }
 
@@ -58,7 +62,9 @@ func (c *pingFederateJWTClient) UpdateClientSecret(ctx context.Context, clientID
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if err := c.setJWTAuth(req, c.adminURL); err != nil {
+	if c.adminUsername != "" && c.adminPassword != "" {
+		req.SetBasicAuth(c.adminUsername, c.adminPassword)
+	} else if err := c.setJWTAuth(req, c.adminURL); err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")

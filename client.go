@@ -3,6 +3,7 @@ package pingfederate
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,18 @@ import (
 	"net/url"
 	"strings"
 )
+
+// newHTTPClient creates an HTTP client with optional TLS skip-verify.
+func newHTTPClient(insecureTLS bool) *http.Client {
+	if insecureTLS {
+		return &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-configured for self-signed certs
+			},
+		}
+	}
+	return &http.Client{}
+}
 
 // generateRandomSecret creates a cryptographically random 32-byte hex-encoded secret.
 func generateRandomSecret() (string, error) {
@@ -43,6 +56,8 @@ type pingFederateClient struct {
 	tokenURL             string
 	footholdClientID     string
 	footholdClientSecret string
+	adminUsername        string
+	adminPassword        string
 	httpClient           *http.Client
 }
 
@@ -52,7 +67,9 @@ func newPingFederateClient(cfg *pingFederateConfig) *pingFederateClient {
 		tokenURL:             cfg.TokenURL,
 		footholdClientID:     cfg.ClientID,
 		footholdClientSecret: cfg.ClientSecret,
-		httpClient:           &http.Client{},
+		adminUsername:        cfg.AdminUsername,
+		adminPassword:        cfg.AdminPassword,
+		httpClient:           newHTTPClient(cfg.InsecureTLS),
 	}
 }
 
@@ -71,7 +88,11 @@ func (c *pingFederateClient) UpdateClientSecret(ctx context.Context, clientID st
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.SetBasicAuth(c.footholdClientID, c.footholdClientSecret)
+	if c.adminUsername != "" && c.adminPassword != "" {
+		req.SetBasicAuth(c.adminUsername, c.adminPassword)
+	} else {
+		req.SetBasicAuth(c.footholdClientID, c.footholdClientSecret)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-XSRF-Header", "PingFederate")
 

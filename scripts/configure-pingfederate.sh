@@ -5,7 +5,14 @@ set -euo pipefail
 PF_ADMIN_URL="${PF_ADMIN_URL:-https://localhost:9999}"
 PF_ADMIN_USER="${PF_ADMIN_USER:-administrator}"
 PING_IDENTITY_PASSWORD="${PING_IDENTITY_PASSWORD:-2FederateM0re}"
-VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
+
+# VAULT_ADDR_CONTAINER is the Vault address reachable from inside the PF container
+# (via socat bridge on the Apple Containers gateway IP). Falls back to VAULT_ADDR.
+VAULT_ADDR_CONTAINER="${VAULT_ADDR_CONTAINER:-${VAULT_ADDR:-http://127.0.0.1:8200}}"
+
+# Shared foothold secret — used for both the OAuth client and the PF admin account.
+# Must meet PF's admin password complexity requirements (uppercase, lowercase, digit, special char).
+FOOTHOLD_SECRET="V4ult-Test0"
 
 CURL_OPTS=(-sk -H "X-XSRF-Header: PingFederate" -H "Content-Type: application/json" -u "${PF_ADMIN_USER}:${PING_IDENTITY_PASSWORD}")
 
@@ -53,7 +60,7 @@ elif [ "$atm_code" = "422" ]; then
     echo "  Access Token Manager already exists."
 else
     echo "  Warning: ATM creation returned HTTP $atm_code"
-    echo "$atm_response" | head -n -1
+    echo "$atm_response" | sed '$d'
 fi
 
 # Create an Access Token Mapping (maps client credentials to token attributes).
@@ -83,7 +90,38 @@ elif [ "$mapping_code" = "422" ]; then
     echo "  Access Token Mapping already exists."
 else
     echo "  Warning: Mapping creation returned HTTP $mapping_code"
-    echo "$mapping_response" | head -n -1
+    echo "$mapping_response" | sed '$d'
+fi
+
+# Create an administrative account matching the foothold's credentials.
+# This allows the Vault plugin to use the same credentials for both the
+# admin API (Basic Auth) and the token endpoint (client_credentials).
+echo "Creating admin account: vault-foothold-secret..."
+admin_response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
+    -X POST \
+    "${PF_ADMIN_URL}/pf-admin-api/v1/administrativeAccounts" \
+    -d '{
+        "username": "vault-foothold-secret",
+        "password": "'"${FOOTHOLD_SECRET}"'",
+        "active": true,
+        "roles": ["ADMINISTRATOR"],
+        "auditor": false
+    }' 2>/dev/null)
+
+admin_code=$(echo "$admin_response" | tail -1)
+admin_body=$(echo "$admin_response" | sed '$d')
+if [ "$admin_code" = "201" ] || [ "$admin_code" = "200" ]; then
+    echo "  Admin account created."
+elif [ "$admin_code" = "422" ]; then
+    if echo "$admin_body" | grep -q "already exists"; then
+        echo "  Admin account already exists."
+    else
+        echo "  Warning: Admin account creation returned HTTP 422:"
+        echo "  $admin_body"
+    fi
+else
+    echo "  Warning: Admin account creation returned HTTP $admin_code:"
+    echo "  $admin_body"
 fi
 
 # 1. vault-foothold-secret — client_secret auth for foothold tests.
@@ -95,7 +133,7 @@ response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
         "name": "Vault Foothold (Secret)",
         "clientAuth": {
             "type": "SECRET",
-            "secret": "test-foothold-secret"
+            "secret": "'"${FOOTHOLD_SECRET}"'"
         },
         "grantTypes": ["CLIENT_CREDENTIALS"],
         "defaultAccessTokenManagerRef": { "id": "jwtatm" }
@@ -108,12 +146,12 @@ elif [ "$code" = "422" ]; then
     echo "  vault-foothold-secret already exists."
 else
     echo "  Error creating vault-foothold-secret (HTTP $code):"
-    echo "$response" | head -n -1
+    echo "$response" | sed '$d'
     exit 1
 fi
 
 # 2. vault-foothold-jwt — private_key_jwt auth for foothold tests.
-#    JWKS URL points to Vault's JWKS endpoint.
+#    JWKS URL points to Vault's JWKS endpoint via the container gateway.
 echo "Creating OAuth client: vault-foothold-jwt..."
 response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
     "${PF_ADMIN_URL}/pf-admin-api/v1/oauth/clients" \
@@ -125,7 +163,7 @@ response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
             "enforceReplayPrevention": false
         },
         "jwksSettings": {
-            "jwksUrl": "'"${VAULT_ADDR}"'/v1/pingfederate/jwks"
+            "jwksUrl": "'"${VAULT_ADDR_CONTAINER}"'/v1/pingfederate/jwks"
         },
         "grantTypes": ["CLIENT_CREDENTIALS"],
         "defaultAccessTokenManagerRef": { "id": "jwtatm" }
@@ -138,7 +176,7 @@ elif [ "$code" = "422" ]; then
     echo "  vault-foothold-jwt already exists."
 else
     echo "  Error creating vault-foothold-jwt (HTTP $code):"
-    echo "$response" | head -n -1
+    echo "$response" | sed '$d'
     exit 1
 fi
 
@@ -164,7 +202,7 @@ elif [ "$code" = "422" ]; then
     echo "  target-service-account already exists."
 else
     echo "  Error creating target-service-account (HTTP $code):"
-    echo "$response" | head -n -1
+    echo "$response" | sed '$d'
     exit 1
 fi
 
