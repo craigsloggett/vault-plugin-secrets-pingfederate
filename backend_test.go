@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1789,6 +1790,74 @@ func TestTokenWriteWithScope(t *testing.T) {
 	}
 	if resp.Data["access_token"] != "brokered-jwt-token" {
 		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
+	}
+}
+
+func TestTokenReadReservedMetadataKeysWarning(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-reserved-1", map[string]string{
+		"grant_type": "authorization_code",
+		"client_id":  "evil-client",
+		"team":       "platform",
+	})
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		// Reserved keys must not be overwritten.
+		if r.FormValue("grant_type") != "client_credentials" {
+			t.Fatalf("grant_type was overwritten: got %q", r.FormValue("grant_type"))
+		}
+		// Safe key should pass through.
+		if r.FormValue("team") != "platform" {
+			t.Fatalf("expected team=platform, got %q", r.FormValue("team"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-reserved-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if resp.Data["access_token"] != "brokered-jwt-token" {
+		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
+	}
+
+	// Verify warnings were emitted for the reserved keys.
+	reservedWarnings := 0
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "conflicts with a reserved OAuth parameter") {
+			reservedWarnings++
+		}
+	}
+	if reservedWarnings != 2 {
+		t.Errorf("expected 2 reserved key warnings, got %d; warnings: %v", reservedWarnings, resp.Warnings)
 	}
 }
 

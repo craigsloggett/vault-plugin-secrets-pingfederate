@@ -60,9 +60,12 @@ func TestGetBrokeredTokenBasicAuth(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	resp, err := getBrokeredToken(context.Background(), server.Client(), cfg, "openid", "entity-123", map[string]string{"team": "platform"})
+	resp, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "openid", "entity-123", map[string]string{"team": "platform"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("expected no skipped keys, got %v", skipped)
 	}
 	if resp.AccessToken != "brokered-token" {
 		t.Fatalf("expected access_token=brokered-token, got %q", resp.AccessToken)
@@ -128,7 +131,7 @@ func TestGetBrokeredTokenJWT(t *testing.T) {
 		TokenURL:         server.URL,
 	}
 
-	resp, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-456", nil)
+	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-456", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +166,7 @@ func TestGetBrokeredTokenNoScope(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	resp, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
+	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -202,7 +205,7 @@ func TestGetBrokeredTokenNoMetadata(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	resp, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
+	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,8 +227,73 @@ func TestGetBrokeredTokenServerError(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	_, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
+	_, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
 	if err == nil {
 		t.Fatal("expected error for server error response")
+	}
+}
+
+func TestGetBrokeredTokenReservedMetadataKeys(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+
+		// grant_type must not be overwritten.
+		if r.FormValue("grant_type") != "client_credentials" {
+			t.Fatalf("grant_type was overwritten: got %q", r.FormValue("grant_type"))
+		}
+		// vault_entity_id must not be overwritten.
+		if r.FormValue("vault_entity_id") != "entity-1" {
+			t.Fatalf("vault_entity_id was overwritten: got %q", r.FormValue("vault_entity_id"))
+		}
+		// Safe key should be present.
+		if r.FormValue("team") != "platform" {
+			t.Fatalf("expected team=platform, got %q", r.FormValue("team"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(AccessTokenResponse{
+			AccessToken: "reserved-test-token",
+			TokenType:   "Bearer",
+			ExpiresIn:   3600,
+		}); err != nil {
+			t.Fatalf("failed to encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &pingFederateConfig{
+		ClientID:     "client",
+		ClientSecret: "secret",
+		TokenURL:     server.URL,
+	}
+
+	metadata := map[string]string{
+		"grant_type":      "authorization_code",
+		"vault_entity_id": "spoofed-entity",
+		"client_id":       "evil-client",
+		"team":            "platform",
+	}
+
+	resp, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", metadata)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.AccessToken != "reserved-test-token" {
+		t.Fatalf("expected reserved-test-token, got %q", resp.AccessToken)
+	}
+	if len(skipped) != 3 {
+		t.Fatalf("expected 3 skipped keys, got %d: %v", len(skipped), skipped)
+	}
+
+	skippedSet := make(map[string]bool)
+	for _, k := range skipped {
+		skippedSet[k] = true
+	}
+	for _, expected := range []string{"grant_type", "vault_entity_id", "client_id"} {
+		if !skippedSet[expected] {
+			t.Errorf("expected %q to be in skipped keys", expected)
+		}
 	}
 }
