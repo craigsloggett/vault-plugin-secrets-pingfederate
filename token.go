@@ -78,7 +78,7 @@ func getBrokeredToken(ctx context.Context, httpClient *http.Client, cfg *pingFed
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read token response body: %w", err)
 	}

@@ -102,7 +102,7 @@ func (c *pingFederateClient) UpdateClientSecret(ctx context.Context, clientID st
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -133,7 +133,7 @@ func (c *pingFederateClient) GetAccessToken(ctx context.Context, clientID, clien
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
