@@ -2,6 +2,7 @@ package pingfederate
 
 import (
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -114,17 +115,31 @@ func algorithmToJose(alg string) (jose.SignatureAlgorithm, error) {
 func validateKeyAlgorithmMatch(key any, alg string) error {
 	upper := strings.ToUpper(alg)
 
-	switch key.(type) {
+	switch key := key.(type) {
 	case *rsa.PrivateKey:
 		if strings.HasPrefix(upper, "RS") || strings.HasPrefix(upper, "PS") {
 			return nil
 		}
 		return fmt.Errorf("RSA private key is not compatible with algorithm %q; use RS* or PS* algorithms", alg)
 	case *ecdsa.PrivateKey:
-		if strings.HasPrefix(upper, "ES") {
-			return nil
+		if !strings.HasPrefix(upper, "ES") {
+			return fmt.Errorf("EC private key is not compatible with algorithm %q; use ES* algorithms", alg)
 		}
-		return fmt.Errorf("EC private key is not compatible with algorithm %q; use ES* algorithms", alg)
+		switch upper {
+		case "ES256":
+			if key.Curve != elliptic.P256() {
+				return fmt.Errorf("algorithm ES256 requires a P-256 key, but key uses %s", key.Curve.Params().Name)
+			}
+		case "ES384":
+			if key.Curve != elliptic.P384() {
+				return fmt.Errorf("algorithm ES384 requires a P-384 key, but key uses %s", key.Curve.Params().Name)
+			}
+		case "ES512":
+			if key.Curve != elliptic.P521() {
+				return fmt.Errorf("algorithm ES512 requires a P-521 key, but key uses %s", key.Curve.Params().Name)
+			}
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported private key type %T", key)
 	}

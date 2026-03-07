@@ -279,10 +279,9 @@ func TestValidateKeyAlgorithmMatch(t *testing.T) {
 			t.Errorf("expected RSA key to be valid with %s, got error: %v", alg, err)
 		}
 	}
-	for _, alg := range []string{"ES256", "ES384", "ES512"} {
-		if err := validateKeyAlgorithmMatch(ecKey, alg); err != nil {
-			t.Errorf("expected EC key to be valid with %s, got error: %v", alg, err)
-		}
+	// P-256 key should only match ES256.
+	if err := validateKeyAlgorithmMatch(ecKey, "ES256"); err != nil {
+		t.Errorf("expected P-256 key to be valid with ES256, got error: %v", err)
 	}
 
 	// Invalid combinations.
@@ -291,5 +290,49 @@ func TestValidateKeyAlgorithmMatch(t *testing.T) {
 	}
 	if err := validateKeyAlgorithmMatch(ecKey, "RS256"); err == nil {
 		t.Error("expected error for EC key with RS256")
+	}
+}
+
+func TestValidateKeyAlgorithmMatchECCurves(t *testing.T) {
+	p256Key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate P-256 key: %v", err)
+	}
+	p384Key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate P-384 key: %v", err)
+	}
+	p521Key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate P-521 key: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		key     *ecdsa.PrivateKey
+		alg     string
+		wantErr bool
+	}{
+		{"P-256 with ES256", p256Key, "ES256", false},
+		{"P-384 with ES384", p384Key, "ES384", false},
+		{"P-521 with ES512", p521Key, "ES512", false},
+		{"P-256 with ES384", p256Key, "ES384", true},
+		{"P-256 with ES512", p256Key, "ES512", true},
+		{"P-384 with ES256", p384Key, "ES256", true},
+		{"P-384 with ES512", p384Key, "ES512", true},
+		{"P-521 with ES256", p521Key, "ES256", true},
+		{"P-521 with ES384", p521Key, "ES384", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateKeyAlgorithmMatch(tt.key, tt.alg)
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for %s", tt.name)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for %s: %v", tt.name, err)
+			}
+		})
 	}
 }
