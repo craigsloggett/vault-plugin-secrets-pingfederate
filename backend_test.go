@@ -1460,9 +1460,9 @@ func TestJWKSPrivateKeyJWTRSA(t *testing.T) {
 	if resp.Data[logical.HTTPContentType] != "application/json" {
 		t.Fatalf("expected application/json content type, got %v", resp.Data[logical.HTTPContentType])
 	}
-	rawBody, ok := resp.Data[logical.HTTPRawBody].([]byte)
+	rawBody, ok := resp.Data[logical.HTTPRawBody].(string)
 	if !ok {
-		t.Fatalf("expected http_raw_body to be []byte, got %T", resp.Data[logical.HTTPRawBody])
+		t.Fatalf("expected http_raw_body to be string, got %T", resp.Data[logical.HTTPRawBody])
 	}
 	if len(rawBody) == 0 {
 		t.Fatal("expected non-empty raw body")
