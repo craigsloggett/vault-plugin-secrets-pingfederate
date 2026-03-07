@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -21,6 +22,7 @@ type pingFederateConfig struct {
 	TokenURL         string        `json:"token_url"`
 	DefaultTTL       time.Duration `json:"default_ttl,omitempty"`
 	MaxTTL           time.Duration `json:"max_ttl,omitempty"`
+	KeySource        string        `json:"key_source,omitempty"`
 }
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
@@ -52,14 +54,14 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 			},
 			"private_key": {
 				Type:        framework.TypeString,
-				Description: "PEM-encoded private key for private_key_jwt authentication.",
+				Description: "PEM-encoded private key for private_key_jwt authentication. If omitted, a key is generated internally.",
 				DisplayAttrs: &framework.DisplayAttributes{
 					Sensitive: true,
 				},
 			},
 			"private_key_id": {
 				Type:        framework.TypeString,
-				Description: "Key ID (kid) to include in JWT headers. Must match the key registered in PingFederate.",
+				Description: "Key ID (kid) to include in JWT headers. If omitted, a UUID is generated automatically.",
 			},
 			"signing_algorithm": {
 				Type:        framework.TypeString,
@@ -153,6 +155,9 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	if cfg.PrivateKeyID != "" {
 		data["private_key_id"] = cfg.PrivateKeyID
 	}
+	if cfg.KeySource != "" {
+		data["key_source"] = cfg.KeySource
+	}
 	if cfg.DefaultTTL > 0 {
 		data["default_ttl"] = int64(cfg.DefaultTTL.Seconds())
 	}
@@ -228,25 +233,40 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		cfg.PrivateKey = ""
 		cfg.PrivateKeyID = ""
 		cfg.SigningAlgorithm = ""
+		cfg.KeySource = ""
 	case "private_key_jwt":
-		if cfg.PrivateKey == "" {
-			return logical.ErrorResponse("private_key is required when auth_method is private_key_jwt"), nil
-		}
-		if cfg.PrivateKeyID == "" {
-			return logical.ErrorResponse("private_key_id is required when auth_method is private_key_jwt"), nil
-		}
 		if cfg.SigningAlgorithm == "" {
 			cfg.SigningAlgorithm = "RS256"
 		}
 		if _, err := algorithmToJose(cfg.SigningAlgorithm); err != nil {
 			return logical.ErrorResponse("invalid signing_algorithm: %s", err), nil
 		}
-		key, err := parsePrivateKey(cfg.PrivateKey)
-		if err != nil {
-			return logical.ErrorResponse("invalid private_key: %s", err), nil
+		_, keyProvidedInRequest := d.GetOk("private_key")
+		if cfg.PrivateKey == "" {
+			generatedPEM, err := generateSigningKey(cfg.SigningAlgorithm)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate signing key: %w", err)
+			}
+			cfg.PrivateKey = generatedPEM
+			cfg.KeySource = "internal"
+		} else {
+			if keyProvidedInRequest {
+				cfg.KeySource = "external"
+			}
+			key, err := parsePrivateKey(cfg.PrivateKey)
+			if err != nil {
+				return logical.ErrorResponse("invalid private_key: %s", err), nil
+			}
+			if err := validateKeyAlgorithmMatch(key, cfg.SigningAlgorithm); err != nil {
+				return logical.ErrorResponse("%s", err), nil
+			}
 		}
-		if err := validateKeyAlgorithmMatch(key, cfg.SigningAlgorithm); err != nil {
-			return logical.ErrorResponse("%s", err), nil
+		if cfg.PrivateKeyID == "" {
+			kid, err := uuid.GenerateUUID()
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate key ID: %w", err)
+			}
+			cfg.PrivateKeyID = kid
 		}
 		// Clear client_secret so stale sensitive material doesn't persist.
 		cfg.ClientSecret = ""

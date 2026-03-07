@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -47,10 +48,41 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 	}
 
 	if cfg.AuthMethod == "private_key_jwt" {
-		return logical.ErrorResponse(
-			"root rotation is not supported for private_key_jwt auth; " +
-				"generate a new key pair and update the config manually",
-		), nil
+		alg := cfg.SigningAlgorithm
+		if alg == "" {
+			alg = "RS256"
+		}
+		newPEM, err := generateSigningKey(alg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate new signing key: %w", err)
+		}
+		kid, err := uuid.GenerateUUID()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate key ID: %w", err)
+		}
+		cfg.PrivateKey = newPEM
+		cfg.PrivateKeyID = kid
+		cfg.KeySource = "internal"
+
+		entry, err := logical.StorageEntryJSON("config", cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create storage entry: %w", err)
+		}
+		if err := req.Storage.Put(ctx, entry); err != nil {
+			return nil, fmt.Errorf("failed to write updated config to storage: %w", err)
+		}
+		b.reset()
+
+		resp := &logical.Response{
+			Data: map[string]any{
+				"private_key_id":    kid,
+				"signing_algorithm": alg,
+				"key_source":        "internal",
+			},
+		}
+		resp.AddWarning("Signing key has been rotated. PingFederate will pick up the new public key from the JWKS endpoint.")
+		resp.AddWarning("This plugin is currently in beta. Interfaces and behavior may change in future releases.")
+		return resp, nil
 	}
 
 	client, err := b.getClient(ctx, req.Storage)
