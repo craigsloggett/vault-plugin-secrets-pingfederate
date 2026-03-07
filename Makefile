@@ -155,6 +155,13 @@ test: $(BIN)/go
 	@echo "Testing..."
 	@go test ./... -count=1
 
+.PHONY: integration-test
+integration-test: build
+	@./scripts/integration-setup.sh
+	@go test -tags integration -v -count=1 -timeout 10m ./integration/ || \
+		(./scripts/integration-teardown.sh && exit 1)
+	@./scripts/integration-teardown.sh
+
 .PHONY: clean
 clean:
 	@echo "Removing the $(CACHE) directory..."
