@@ -66,7 +66,7 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 
 	scope, _ := d.Get("scope").(string)
 
-	tokenResp, err := getBrokeredToken(ctx, newHTTPClient(cfg.InsecureTLS), cfg, scope, req.EntityID, metadata)
+	tokenResp, skippedKeys, err := getBrokeredToken(ctx, newHTTPClient(cfg.InsecureTLS), cfg, scope, req.EntityID, metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain brokered token: %w", err)
 	}
@@ -77,6 +77,9 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 			"token_type":   tokenResp.TokenType,
 			"expires_in":   tokenResp.ExpiresIn,
 		},
+	}
+	for _, k := range skippedKeys {
+		resp.AddWarning(fmt.Sprintf("Entity metadata key %q conflicts with a reserved OAuth parameter and was not sent to PingFederate.", k))
 	}
 	resp.AddWarning("This plugin is currently in beta. Interfaces and behavior may change in future releases.")
 	return resp, nil
