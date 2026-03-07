@@ -193,9 +193,9 @@ func (b *pingFederateBackend) staticCredsReadOperation(ctx context.Context, req 
 		return nil, err
 	}
 
-	secret, err := client.GetClientSecret(ctx, role.ClientID)
+	secret, err := client.UpdateClientSecret(ctx, role.ClientID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve client secret for %s: %w", role.ClientID, err)
+		return nil, fmt.Errorf("failed to rotate client secret for %s: %w", role.ClientID, err)
 	}
 
 	tokenResp, err := client.GetAccessToken(ctx, role.ClientID, secret)
