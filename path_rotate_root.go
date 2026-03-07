@@ -116,9 +116,9 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 }
 
 // logRootRotationFailure logs an error when the rotated secret was accepted by
-// PingFederate but could not be persisted to Vault storage. The PingFederate
-// admin API does not support setting a specific secret (PUT generates a new
-// one), so automatic rollback is not possible.
+// PingFederate but could not be persisted to Vault storage. Although the plugin
+// sends a specific secret via PUT, automatic rollback is not currently
+// implemented — the old secret is discarded before the storage write attempt.
 func (b *pingFederateBackend) logRootRotationFailure(clientID string) {
 	b.Logger().Error("failed to persist rotated root credentials; PingFederate has the new secret but Vault does not",
 		"client_id", clientID,
