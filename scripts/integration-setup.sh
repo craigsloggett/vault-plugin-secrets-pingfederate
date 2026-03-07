@@ -16,6 +16,11 @@ export PF_ADMIN_URL="https://localhost:9999"
 export VAULT_ADDR="http://127.0.0.1:8200"
 export VAULT_TOKEN="root"
 
+# Apple Containers network gateway — used by PingFederate (inside the container)
+# to reach Vault (on the host) via a socat bridge.
+CONTAINER_GATEWAY_IP="192.168.64.1"
+export VAULT_ADDR_CONTAINER="http://${CONTAINER_GATEWAY_IP}:8200"
+
 CONTAINER_NAME="pingfederate-integration"
 
 echo "=== Integration Test Setup ==="
@@ -90,26 +95,45 @@ until vault status > /dev/null 2>&1; do
 done
 echo "Vault is ready (PID: ${VAULT_PID})."
 
-# Step 5: Enable the plugin.
+# Step 5: Start socat bridge so PingFederate (in container) can reach Vault (on host).
+# The container network gateway is 192.168.64.1; socat forwards traffic to localhost.
+echo ""
+echo "--- Starting socat bridge (${CONTAINER_GATEWAY_IP}:8200 -> 127.0.0.1:8200) ---"
+pkill -f "socat TCP-LISTEN:8200.*bind=${CONTAINER_GATEWAY_IP}" 2>/dev/null || true
+sleep 1
+socat "TCP-LISTEN:8200,fork,bind=${CONTAINER_GATEWAY_IP}" TCP:127.0.0.1:8200 &
+SOCAT_PID=$!
+echo "${SOCAT_PID}" > /tmp/socat-integration.pid
+echo "socat bridge started (PID: ${SOCAT_PID})."
+
+# Step 6: Enable the plugin.
 echo ""
 echo "--- Enabling plugin ---"
 vault secrets enable -path=pingfederate vault-plugin-secrets-pingfederate
 echo "Plugin enabled at pingfederate/."
 
-# Step 6: Configure PingFederate OAuth clients.
+# Step 7: Configure PingFederate OAuth clients.
 echo ""
 echo "--- Configuring PingFederate OAuth clients ---"
 bash "${SCRIPT_DIR}/configure-pingfederate.sh"
 
-# Step 7: Set up Vault identity for token brokering tests.
+# Step 8: Set up Vault identity for token brokering tests.
 echo ""
 echo "--- Setting up Vault identity ---"
 
 # Enable userpass auth.
 vault auth enable userpass 2>/dev/null || echo "  userpass already enabled."
 
-# Create a test user.
-vault write auth/userpass/users/integration-test-user password=testpassword
+# Create a policy granting access to the plugin paths.
+vault policy write integration-test - <<'POLICY'
+path "pingfederate/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+POLICY
+echo "  Policy created."
+
+# Create a test user with the integration-test policy.
+vault write auth/userpass/users/integration-test-user password=testpassword policies=integration-test
 
 # Create a Vault entity with metadata.
 ENTITY_RESPONSE=$(vault write -format=json identity/entity \
@@ -133,4 +157,5 @@ echo ""
 echo "=== Setup complete ==="
 echo "  PingFederate: ${PF_ADMIN_URL}"
 echo "  Vault:        ${VAULT_ADDR}"
+echo "  Vault (container): ${VAULT_ADDR_CONTAINER}"
 echo "  Vault Token:  ${VAULT_TOKEN}"

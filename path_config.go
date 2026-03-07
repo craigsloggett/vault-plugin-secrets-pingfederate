@@ -15,11 +15,14 @@ type pingFederateConfig struct {
 	AuthMethod       string        `json:"auth_method,omitempty"`
 	ClientID         string        `json:"client_id"`
 	ClientSecret     string        `json:"client_secret,omitempty"`
+	AdminUsername    string        `json:"admin_username,omitempty"`
+	AdminPassword    string        `json:"admin_password,omitempty"`
 	PrivateKey       string        `json:"private_key,omitempty"`
 	PrivateKeyID     string        `json:"private_key_id,omitempty"`
 	SigningAlgorithm string        `json:"signing_algorithm,omitempty"`
 	URL              string        `json:"url"`
 	TokenURL         string        `json:"token_url"`
+	InsecureTLS      bool          `json:"insecure_tls,omitempty"`
 	DefaultTTL       time.Duration `json:"default_ttl,omitempty"`
 	MaxTTL           time.Duration `json:"max_ttl,omitempty"`
 	KeySource        string        `json:"key_source,omitempty"`
@@ -52,6 +55,17 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 					Sensitive: true,
 				},
 			},
+			"admin_username": {
+				Type:        framework.TypeString,
+				Description: "Username for PingFederate admin API authentication. If set, admin API operations use these credentials instead of the foothold client credentials.",
+			},
+			"admin_password": {
+				Type:        framework.TypeString,
+				Description: "Password for PingFederate admin API authentication.",
+				DisplayAttrs: &framework.DisplayAttributes{
+					Sensitive: true,
+				},
+			},
 			"private_key": {
 				Type:        framework.TypeString,
 				Description: "PEM-encoded private key for private_key_jwt authentication. If omitted, a key is generated internally.",
@@ -76,6 +90,10 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "The PingFederate OAuth 2.0 token endpoint URL (e.g. https://pingfederate.example.com:9031/as/token.oauth2).",
 				Required:    true,
+			},
+			"insecure_tls": {
+				Type:        framework.TypeBool,
+				Description: "If true, skip TLS certificate verification when connecting to PingFederate. Not recommended for production.",
 			},
 			"default_ttl": {
 				Type:        framework.TypeDurationSecond,
@@ -144,10 +162,11 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	}
 
 	data := map[string]any{
-		"auth_method": authMethod,
-		"client_id":   cfg.ClientID,
-		"url":         cfg.URL,
-		"token_url":   cfg.TokenURL,
+		"auth_method":  authMethod,
+		"client_id":    cfg.ClientID,
+		"url":          cfg.URL,
+		"token_url":    cfg.TokenURL,
+		"insecure_tls": cfg.InsecureTLS,
 	}
 	if cfg.SigningAlgorithm != "" {
 		data["signing_algorithm"] = cfg.SigningAlgorithm
@@ -157,6 +176,9 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	}
 	if cfg.KeySource != "" {
 		data["key_source"] = cfg.KeySource
+	}
+	if cfg.AdminUsername != "" {
+		data["admin_username"] = cfg.AdminUsername
 	}
 	if cfg.DefaultTTL > 0 {
 		data["default_ttl"] = int64(cfg.DefaultTTL.Seconds())
@@ -188,6 +210,12 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	if clientSecret, ok := d.GetOk("client_secret"); ok {
 		cfg.ClientSecret, _ = clientSecret.(string)
 	}
+	if v, ok := d.GetOk("admin_username"); ok {
+		cfg.AdminUsername, _ = v.(string)
+	}
+	if v, ok := d.GetOk("admin_password"); ok {
+		cfg.AdminPassword, _ = v.(string)
+	}
 	if v, ok := d.GetOk("private_key"); ok {
 		cfg.PrivateKey, _ = v.(string)
 	}
@@ -202,6 +230,9 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	}
 	if tokenURL, ok := d.GetOk("token_url"); ok {
 		cfg.TokenURL, _ = tokenURL.(string)
+	}
+	if v, ok := d.GetOk("insecure_tls"); ok {
+		cfg.InsecureTLS, _ = v.(bool)
 	}
 	if v, ok := d.GetOk("default_ttl"); ok {
 		if seconds, ok := v.(int); ok {

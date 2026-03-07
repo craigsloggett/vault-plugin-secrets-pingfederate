@@ -75,7 +75,8 @@ func jwksResponse(jwks jose.JSONWebKeySet) (*logical.Response, error) {
 	}
 
 	respData[logical.HTTPContentType] = "application/json"
-	respData[logical.HTTPRawBody] = jwksJSON
+	respData[logical.HTTPRawBody] = string(jwksJSON)
+	respData[logical.HTTPStatusCode] = 200
 
 	return &logical.Response{Data: respData}, nil
 }
