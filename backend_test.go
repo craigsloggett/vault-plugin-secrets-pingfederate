@@ -801,7 +801,7 @@ func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
 	}
 }
 
-func TestConfigWriteJWTMissingPrivateKey(t *testing.T) {
+func TestConfigWriteJWTAutoGenerateKey(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
@@ -809,22 +809,43 @@ func TestConfigWriteJWTMissingPrivateKey(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method":    "private_key_jwt",
-			"client_id":      "jwt-admin-client",
-			"private_key_id": "key-1",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method": "private_key_jwt",
+			"client_id":   "jwt-admin-client",
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
 		},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response for missing private_key")
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify the stored config has an internally generated key.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.PrivateKey == "" {
+		t.Fatal("expected auto-generated private_key")
+	}
+	if cfg.PrivateKeyID == "" {
+		t.Fatal("expected auto-generated private_key_id")
+	}
+	if cfg.KeySource != "internal" {
+		t.Fatalf("expected key_source=internal, got %q", cfg.KeySource)
+	}
+	if cfg.SigningAlgorithm != "RS256" {
+		t.Fatalf("expected default signing_algorithm=RS256, got %q", cfg.SigningAlgorithm)
+	}
+	// Verify the generated key is valid.
+	if _, err := parsePrivateKey(cfg.PrivateKey); err != nil {
+		t.Fatalf("generated key is not valid: %v", err)
 	}
 }
 
-func TestConfigWriteJWTMissingKeyID(t *testing.T) {
+func TestConfigWriteJWTAutoGenerateKeyID(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
@@ -842,8 +863,19 @@ func TestConfigWriteJWTMissingKeyID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response for missing private_key_id")
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.PrivateKeyID == "" {
+		t.Fatal("expected auto-generated private_key_id")
+	}
+	if cfg.KeySource != "external" {
+		t.Fatalf("expected key_source=external for user-provided key, got %q", cfg.KeySource)
 	}
 }
 
@@ -1012,6 +1044,9 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 	if cfg.SigningAlgorithm != "" {
 		t.Fatal("expected signing_algorithm to be cleared after switching to client_secret")
 	}
+	if cfg.KeySource != "" {
+		t.Fatal("expected key_source to be cleared after switching to client_secret")
+	}
 	if cfg.ClientSecret != "new-secret" {
 		t.Fatalf("expected client_secret 'new-secret', got %q", cfg.ClientSecret)
 	}
@@ -1044,6 +1079,9 @@ func TestConfigReadJWT(t *testing.T) {
 	if _, exists := resp.Data["private_key"]; exists {
 		t.Fatal("private_key should not be returned in read response")
 	}
+	if resp.Data["key_source"] != "external" {
+		t.Fatalf("expected key_source 'external', got %v", resp.Data["key_source"])
+	}
 }
 
 func TestConfigReadClientSecretDefaultAuthMethod(t *testing.T) {
@@ -1066,7 +1104,7 @@ func TestConfigReadClientSecretDefaultAuthMethod(t *testing.T) {
 	}
 }
 
-func TestRotateRootJWTReturnsError(t *testing.T) {
+func TestRotateRootJWTGeneratesNewKey(t *testing.T) {
 	b, storage := newTestBackend(t)
 	writeTestJWTConfig(t, b, storage)
 
@@ -1078,8 +1116,35 @@ func TestRotateRootJWTReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response for rotate-root with private_key_jwt")
+	if resp == nil || resp.IsError() {
+		t.Fatalf("expected success, got error: %v", resp)
+	}
+
+	kid, ok := resp.Data["private_key_id"].(string)
+	if !ok || kid == "" {
+		t.Fatal("expected private_key_id in response")
+	}
+	if resp.Data["signing_algorithm"] != "RS256" {
+		t.Fatalf("expected signing_algorithm=RS256, got %v", resp.Data["signing_algorithm"])
+	}
+	if resp.Data["key_source"] != "internal" {
+		t.Fatalf("expected key_source=internal, got %v", resp.Data["key_source"])
+	}
+
+	// Verify the stored config has the new key.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.PrivateKeyID != kid {
+		t.Fatalf("stored kid %q does not match response kid %q", cfg.PrivateKeyID, kid)
+	}
+	if cfg.KeySource != "internal" {
+		t.Fatalf("expected stored key_source=internal, got %q", cfg.KeySource)
+	}
+	// Verify the new key is valid.
+	if _, err := parsePrivateKey(cfg.PrivateKey); err != nil {
+		t.Fatalf("stored key is not valid: %v", err)
 	}
 }
 
@@ -1732,5 +1797,360 @@ func TestTokenWriteWithScope(t *testing.T) {
 	}
 	if resp.Data["access_token"] != "brokered-jwt-token" {
 		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
+	}
+}
+
+// --- Internal Key Generation Tests ---
+
+func TestConfigWriteAutoGenerateEC(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "ec-client",
+			"signing_algorithm": "ES256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.SigningAlgorithm != "ES256" {
+		t.Fatalf("expected signing_algorithm=ES256, got %q", cfg.SigningAlgorithm)
+	}
+	if cfg.KeySource != "internal" {
+		t.Fatalf("expected key_source=internal, got %q", cfg.KeySource)
+	}
+	key, err := parsePrivateKey(cfg.PrivateKey)
+	if err != nil {
+		t.Fatalf("generated key is not valid: %v", err)
+	}
+	if err := validateKeyAlgorithmMatch(key, "ES256"); err != nil {
+		t.Fatalf("generated key does not match algorithm: %v", err)
+	}
+}
+
+func TestConfigReadKeySource(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with auto-generated key.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":   "auto-client",
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Read and verify key_source is surfaced.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["key_source"] != "internal" {
+		t.Fatalf("expected key_source=internal, got %v", resp.Data["key_source"])
+	}
+}
+
+func TestJWKSAfterAutoGenerate(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with auto-generated key.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":   "jwks-client",
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Read JWKS — should have a key.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "jwks",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected JWKS response")
+	}
+
+	keys, ok := resp.Data["keys"].([]any)
+	if !ok {
+		t.Fatalf("expected keys array, got %T", resp.Data["keys"])
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+}
+
+func TestRotateRootPrivateKeyJWTKeyChanges(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with auto-generated key.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":   "rotate-client",
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Capture the original key and kid.
+	cfg1, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	originalKey := cfg1.PrivateKey
+	originalKid := cfg1.PrivateKeyID
+
+	// Rotate.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "rotate-root",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("expected success, got error: %v", resp)
+	}
+
+	// Verify the key and kid have changed.
+	cfg2, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg2.PrivateKey == originalKey {
+		t.Fatal("expected key to change after rotation")
+	}
+	if cfg2.PrivateKeyID == originalKid {
+		t.Fatal("expected kid to change after rotation")
+	}
+	if cfg2.KeySource != "internal" {
+		t.Fatalf("expected key_source=internal, got %q", cfg2.KeySource)
+	}
+}
+
+func TestRotateRootPrivateKeyJWTEC(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with ES256 auto-generated key.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "ec-rotate-client",
+			"signing_algorithm": "ES256",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	cfg1, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	originalKey := cfg1.PrivateKey
+	originalKid := cfg1.PrivateKeyID
+
+	// Rotate.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "rotate-root",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("expected success, got error: %v", resp)
+	}
+	if resp.Data["signing_algorithm"] != "ES256" {
+		t.Fatalf("expected signing_algorithm=ES256, got %v", resp.Data["signing_algorithm"])
+	}
+
+	cfg2, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg2.PrivateKey == originalKey {
+		t.Fatal("expected key to change after rotation")
+	}
+	if cfg2.PrivateKeyID == originalKid {
+		t.Fatal("expected kid to change after rotation")
+	}
+
+	// Verify the rotated key is EC and matches ES256.
+	key, err := parsePrivateKey(cfg2.PrivateKey)
+	if err != nil {
+		t.Fatalf("rotated key is not valid: %v", err)
+	}
+	if err := validateKeyAlgorithmMatch(key, "ES256"); err != nil {
+		t.Fatalf("rotated key does not match algorithm: %v", err)
+	}
+}
+
+func TestConfigUpdateRetainsKeySource(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Create config with auto-generated key.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":   "original-client",
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify initial state.
+	cfg, err := getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.KeySource != "internal" {
+		t.Fatalf("expected key_source=internal, got %q", cfg.KeySource)
+	}
+	originalKey := cfg.PrivateKey
+
+	// Update only client_id, without providing private_key.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id": "updated-client",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify key_source is still internal and key didn't change.
+	cfg, err = getConfig(context.Background(), storage)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.KeySource != "internal" {
+		t.Fatalf("expected key_source to remain internal after update, got %q", cfg.KeySource)
+	}
+	if cfg.PrivateKey != originalKey {
+		t.Fatal("expected private key to remain unchanged after update")
+	}
+	if cfg.ClientID != "updated-client" {
+		t.Fatalf("expected client_id=updated-client, got %q", cfg.ClientID)
+	}
+}
+
+func TestConfigUpdateRejectsAlgorithmMismatch(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Create config with auto-generated RSA key (default RS256).
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method": "private_key_jwt",
+			"client_id":   "mismatch-client",
+			"url":         "https://pingfederate.example.com:9999",
+			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Try to change signing_algorithm to ES256 without providing a new EC key.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"signing_algorithm": "ES256",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for algorithm mismatch with retained RSA key")
 	}
 }
