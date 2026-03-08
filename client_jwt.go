@@ -92,3 +92,7 @@ func (c *pingFederateJWTClient) UpdateClientSecret(ctx context.Context, clientID
 func (c *pingFederateJWTClient) GetAccessToken(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error) {
 	return getAccessToken(ctx, c.httpClient, c.tokenURL, clientID, clientSecret)
 }
+
+func (c *pingFederateJWTClient) HTTPClient() *http.Client {
+	return c.httpClient
+}

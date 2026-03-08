@@ -54,6 +54,11 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 		return logical.ErrorResponse("backend not configured"), nil
 	}
 
+	client, err := b.getClient(ctx, req.Storage)
+	if err != nil {
+		return nil, err
+	}
+
 	entity, err := b.System().EntityInfo(req.EntityID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to look up entity %s: %w", req.EntityID, err)
@@ -66,7 +71,7 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 
 	scope, _ := d.Get("scope").(string)
 
-	tokenResp, skippedKeys, err := getBrokeredToken(ctx, newHTTPClient(cfg.InsecureTLS), cfg, scope, req.EntityID, metadata)
+	tokenResp, skippedKeys, err := getBrokeredToken(ctx, client.HTTPClient(), cfg, scope, req.EntityID, metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain brokered token: %w", err)
 	}
