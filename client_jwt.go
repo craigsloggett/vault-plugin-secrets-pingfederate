@@ -2,7 +2,6 @@ package pingfederate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,37 +90,5 @@ func (c *pingFederateJWTClient) UpdateClientSecret(ctx context.Context, clientID
 // GetAccessToken obtains a bearer token using the target client's credentials.
 // This uses Basic Auth with the target client's ID and secret, not the foothold's JWT.
 func (c *pingFederateJWTClient) GetAccessToken(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error) {
-	data := url.Values{
-		"grant_type": {"client_credentials"},
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(clientID, clientSecret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to request access token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("PingFederate token endpoint returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp AccessTokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode token response: %w", err)
-	}
-
-	return &tokenResp, nil
+	return getAccessToken(ctx, c.httpClient, c.tokenURL, clientID, clientSecret)
 }
