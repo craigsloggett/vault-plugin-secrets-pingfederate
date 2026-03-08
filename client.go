@@ -115,11 +115,17 @@ func (c *pingFederateClient) UpdateClientSecret(ctx context.Context, clientID st
 }
 
 func (c *pingFederateClient) GetAccessToken(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error) {
+	return getAccessToken(ctx, c.httpClient, c.tokenURL, clientID, clientSecret)
+}
+
+// getAccessToken is the shared implementation for obtaining a bearer token
+// via the client_credentials grant with Basic Auth.
+func getAccessToken(ctx context.Context, httpClient *http.Client, tokenURL, clientID, clientSecret string) (*AccessTokenResponse, error) {
 	data := url.Values{
 		"grant_type": {"client_credentials"},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -127,7 +133,7 @@ func (c *pingFederateClient) GetAccessToken(ctx context.Context, clientID, clien
 	req.SetBasicAuth(clientID, clientSecret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to request access token: %w", err)
 	}
