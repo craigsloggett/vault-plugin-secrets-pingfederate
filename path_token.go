@@ -3,6 +3,7 @@ package pingfederate
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -70,6 +71,22 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 	}
 
 	scope, _ := d.Get("scope").(string)
+
+	if scope == "" && cfg.DefaultScope != "" {
+		scope = cfg.DefaultScope
+	}
+
+	if scope != "" && len(cfg.AllowedScopes) > 0 {
+		allowed := make(map[string]bool, len(cfg.AllowedScopes))
+		for _, s := range cfg.AllowedScopes {
+			allowed[s] = true
+		}
+		for _, s := range strings.Fields(scope) {
+			if !allowed[s] {
+				return logical.ErrorResponse("scope %q is not in allowed_scopes", s), nil
+			}
+		}
+	}
 
 	tokenResp, skippedKeys, err := getBrokeredToken(ctx, client.HTTPClient(), cfg, scope, req.EntityID, metadata)
 	if err != nil {

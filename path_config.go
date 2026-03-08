@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/go-uuid"
@@ -26,6 +27,8 @@ type pingFederateConfig struct {
 	DefaultTTL       time.Duration `json:"default_ttl,omitempty"`
 	MaxTTL           time.Duration `json:"max_ttl,omitempty"`
 	KeySource        string        `json:"key_source,omitempty"`
+	DefaultScope     string        `json:"default_scope,omitempty"`
+	AllowedScopes    []string      `json:"allowed_scopes,omitempty"`
 }
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
@@ -102,6 +105,14 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 			"max_ttl": {
 				Type:        framework.TypeDurationSecond,
 				Description: "Maximum TTL for generated credentials. If not set, uses Vault's system max.",
+			},
+			"default_scope": {
+				Type:        framework.TypeString,
+				Description: "Default OAuth 2.0 scope for brokered token requests. Used when the caller does not specify a scope.",
+			},
+			"allowed_scopes": {
+				Type:        framework.TypeCommaStringSlice,
+				Description: "Comma-separated list of permitted OAuth 2.0 scopes. If set, per-request scope values are validated against this list. If not set, any scope is allowed.",
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -186,6 +197,12 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	if cfg.MaxTTL > 0 {
 		data["max_ttl"] = int64(cfg.MaxTTL.Seconds())
 	}
+	if cfg.DefaultScope != "" {
+		data["default_scope"] = cfg.DefaultScope
+	}
+	if len(cfg.AllowedScopes) > 0 {
+		data["allowed_scopes"] = cfg.AllowedScopes
+	}
 
 	return &logical.Response{
 		Data: data,
@@ -242,6 +259,24 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	if v, ok := d.GetOk("max_ttl"); ok {
 		if seconds, ok := v.(int); ok {
 			cfg.MaxTTL = time.Duration(int64(seconds) * int64(time.Second))
+		}
+	}
+	if v, ok := d.GetOk("default_scope"); ok {
+		cfg.DefaultScope, _ = v.(string)
+	}
+	if v, ok := d.GetOk("allowed_scopes"); ok {
+		cfg.AllowedScopes, _ = v.([]string)
+	}
+
+	if len(cfg.AllowedScopes) > 0 && cfg.DefaultScope != "" {
+		allowed := make(map[string]bool, len(cfg.AllowedScopes))
+		for _, s := range cfg.AllowedScopes {
+			allowed[s] = true
+		}
+		for _, s := range strings.Fields(cfg.DefaultScope) {
+			if !allowed[s] {
+				return logical.ErrorResponse("default_scope contains %q which is not in allowed_scopes", s), nil
+			}
 		}
 	}
 

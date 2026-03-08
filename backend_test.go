@@ -2219,3 +2219,316 @@ func TestConfigUpdateRejectsAlgorithmMismatch(t *testing.T) {
 		t.Fatal("expected error response for algorithm mismatch with retained RSA key")
 	}
 }
+
+func TestConfigWriteDefaultScopeNotInAllowedScopes(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":      "scope-client",
+			"client_secret":  "scope-secret",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+			"default_scope":  "openid profile",
+			"allowed_scopes": "openid,email",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response when default_scope contains values not in allowed_scopes")
+	}
+	if !strings.Contains(resp.Error().Error(), "profile") {
+		t.Fatalf("expected error to mention 'profile', got: %s", resp.Error())
+	}
+}
+
+func TestConfigWriteDefaultScopeWithinAllowedScopes(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":      "scope-client",
+			"client_secret":  "scope-secret",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+			"default_scope":  "openid email",
+			"allowed_scopes": "openid,email,profile",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify values were stored.
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error reading config: %v", err)
+	}
+	if readResp.Data["default_scope"] != "openid email" {
+		t.Fatalf("expected default_scope='openid email', got %v", readResp.Data["default_scope"])
+	}
+	allowedScopes, ok := readResp.Data["allowed_scopes"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_scopes to be []string, got %T", readResp.Data["allowed_scopes"])
+	}
+	if len(allowedScopes) != 3 {
+		t.Fatalf("expected 3 allowed_scopes, got %d: %v", len(allowedScopes), allowedScopes)
+	}
+}
+
+func TestTokenReadDefaultScope(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-default-scope", nil)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("scope") != "openid" {
+			t.Fatalf("expected scope=openid (from default_scope), got %q", r.FormValue("scope"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     server.URL,
+			"default_scope": "openid",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Request token without specifying scope — should use default_scope.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-default-scope",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+	if resp.Data["access_token"] != "brokered-jwt-token" {
+		t.Fatalf("expected access_token=brokered-jwt-token, got %v", resp.Data["access_token"])
+	}
+}
+
+func TestTokenReadScopeOverridesDefault(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-override-scope", nil)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("scope") != "email" {
+			t.Fatalf("expected scope=email (caller override), got %q", r.FormValue("scope"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     server.URL,
+			"default_scope": "openid",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Request token with explicit scope — should override default_scope.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-override-scope",
+		Data: map[string]any{
+			"scope": "email",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+}
+
+func TestTokenReadScopeNotInAllowedScopes(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-bad-scope", nil)
+
+	server := newMockTokenServer(t, nil)
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":      "admin-client",
+			"client_secret":  "admin-secret",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      server.URL,
+			"allowed_scopes": "openid,email",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Request token with a scope not in allowed_scopes.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-bad-scope",
+		Data: map[string]any{
+			"scope": "admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for disallowed scope")
+	}
+	if !strings.Contains(resp.Error().Error(), "admin") {
+		t.Fatalf("expected error to mention 'admin', got: %s", resp.Error())
+	}
+}
+
+func TestTokenReadScopeInAllowedScopes(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-good-scope", nil)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("scope") != "openid email" {
+			t.Fatalf("expected scope='openid email', got %q", r.FormValue("scope"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":      "admin-client",
+			"client_secret":  "admin-secret",
+			"url":            "https://pingfederate.example.com:9999",
+			"token_url":      server.URL,
+			"allowed_scopes": "openid,email,profile",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Request token with allowed scopes.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-good-scope",
+		Data: map[string]any{
+			"scope": "openid email",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+}
+
+func TestTokenReadNoScopeNoDefaultNoAllowed(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-no-scope", nil)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("scope") != "" {
+			t.Fatalf("expected no scope param, got %q", r.FormValue("scope"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":     "admin-client",
+			"client_secret": "admin-secret",
+			"url":           "https://pingfederate.example.com:9999",
+			"token_url":     server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// No scope, no default — should pass through without scope param.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-no-scope",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+}
