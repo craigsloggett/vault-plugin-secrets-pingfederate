@@ -43,6 +43,10 @@ func (m *mockPingFederateClient) GetAccessToken(ctx context.Context, clientID, c
 	}, nil
 }
 
+func (m *mockPingFederateClient) HTTPClient() *http.Client {
+	return &http.Client{}
+}
+
 // newTestBackend creates a configured backend for testing.
 func newTestBackend(t *testing.T) (*pingFederateBackend, logical.Storage) {
 	t.Helper()

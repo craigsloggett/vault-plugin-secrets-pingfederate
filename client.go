@@ -42,6 +42,9 @@ type PingFederateClient interface {
 
 	// GetAccessToken obtains a bearer token via the client_credentials grant.
 	GetAccessToken(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error)
+
+	// HTTPClient returns the underlying HTTP client configured for this connection.
+	HTTPClient() *http.Client
 }
 
 // AccessTokenResponse represents the OAuth 2.0 token endpoint response.
@@ -116,6 +119,10 @@ func (c *pingFederateClient) UpdateClientSecret(ctx context.Context, clientID st
 
 func (c *pingFederateClient) GetAccessToken(ctx context.Context, clientID, clientSecret string) (*AccessTokenResponse, error) {
 	return getAccessToken(ctx, c.httpClient, c.tokenURL, clientID, clientSecret)
+}
+
+func (c *pingFederateClient) HTTPClient() *http.Client {
+	return c.httpClient
 }
 
 // getAccessToken is the shared implementation for obtaining a bearer token
