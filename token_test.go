@@ -60,7 +60,7 @@ func TestGetBrokeredTokenBasicAuth(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	resp, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "openid", "entity-123", map[string]string{"team": "platform"})
+	resp, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "openid", "entity-123", map[string]string{"team": "platform"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestGetBrokeredTokenJWT(t *testing.T) {
 		TokenURL:         server.URL,
 	}
 
-	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-456", nil)
+	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-456", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestGetBrokeredTokenNoScope(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
+	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestGetBrokeredTokenNoMetadata(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
+	resp, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestGetBrokeredTokenServerError(t *testing.T) {
 		TokenURL:     server.URL,
 	}
 
-	_, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil)
+	_, _, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for server error response")
 	}
@@ -276,7 +276,7 @@ func TestGetBrokeredTokenReservedMetadataKeys(t *testing.T) {
 		"team":            "platform",
 	}
 
-	resp, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", metadata)
+	resp, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", metadata, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,5 +295,91 @@ func TestGetBrokeredTokenReservedMetadataKeys(t *testing.T) {
 		if !skippedSet[expected] {
 			t.Errorf("expected %q to be in skipped keys", expected)
 		}
+	}
+}
+
+func TestGetBrokeredTokenAllowedMetadataKeys(t *testing.T) {
+	tests := []struct {
+		name                string
+		metadata            map[string]string
+		allowedMetadataKeys []string
+		wantKeys            []string
+		wantAbsentKeys      []string
+		wantSkipped         int
+	}{
+		{
+			name:                "allowlist filters to allowed keys only",
+			metadata:            map[string]string{"team": "platform", "env": "prod", "internal": "secret"},
+			allowedMetadataKeys: []string{"team", "env"},
+			wantKeys:            []string{"team", "env"},
+			wantAbsentKeys:      []string{"internal"},
+			wantSkipped:         0,
+		},
+		{
+			name:                "empty allowlist passes all keys",
+			metadata:            map[string]string{"team": "platform", "env": "prod"},
+			allowedMetadataKeys: nil,
+			wantKeys:            []string{"team", "env"},
+			wantSkipped:         0,
+		},
+		{
+			name:                "allowed key that is also reserved is still skipped",
+			metadata:            map[string]string{"grant_type": "evil", "team": "platform"},
+			allowedMetadataKeys: []string{"grant_type", "team"},
+			wantKeys:            []string{"team"},
+			wantSkipped:         1,
+		},
+		{
+			name:                "allowlist with no matching metadata keys",
+			metadata:            map[string]string{"internal": "secret"},
+			allowedMetadataKeys: []string{"team"},
+			wantAbsentKeys:      []string{"internal"},
+			wantSkipped:         0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Fatalf("failed to parse form: %v", err)
+				}
+
+				for _, key := range tt.wantKeys {
+					if r.FormValue(key) == "" {
+						t.Errorf("expected form parameter %q to be present", key)
+					}
+				}
+				for _, key := range tt.wantAbsentKeys {
+					if r.FormValue(key) != "" {
+						t.Errorf("expected form parameter %q to be absent, got %q", key, r.FormValue(key))
+					}
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(AccessTokenResponse{
+					AccessToken: "filtered-token",
+					TokenType:   "Bearer",
+					ExpiresIn:   3600,
+				}); err != nil {
+					t.Fatalf("failed to encode response: %v", err)
+				}
+			}))
+			defer server.Close()
+
+			cfg := &pingFederateConfig{
+				ClientID:     "client",
+				ClientSecret: "secret",
+				TokenURL:     server.URL,
+			}
+
+			_, skipped, err := getBrokeredToken(context.Background(), server.Client(), cfg, "", "entity-1", tt.metadata, tt.allowedMetadataKeys)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(skipped) != tt.wantSkipped {
+				t.Fatalf("expected %d skipped keys, got %d: %v", tt.wantSkipped, len(skipped), skipped)
+			}
+		})
 	}
 }

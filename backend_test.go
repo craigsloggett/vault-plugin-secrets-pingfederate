@@ -2672,3 +2672,184 @@ func TestVerifyConnection(t *testing.T) {
 		})
 	}
 }
+
+// --- Allowed Metadata Keys Tests ---
+
+func TestConfigAllowedMetadataKeysRoundTrip(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":             "admin-client",
+			"client_secret":         "admin-secret",
+			"url":                   "https://pingfederate.example.com:9999",
+			"token_url":             "https://pingfederate.example.com:9031/as/token.oauth2",
+			"allowed_metadata_keys": "team,env,department",
+			"verify_connection":     false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error reading config: %v", err)
+	}
+	if readResp == nil {
+		t.Fatal("expected config response, got nil")
+	}
+
+	allowedKeys, ok := readResp.Data["allowed_metadata_keys"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_metadata_keys to be []string, got %T", readResp.Data["allowed_metadata_keys"])
+	}
+	if len(allowedKeys) != 3 {
+		t.Fatalf("expected 3 allowed_metadata_keys, got %d: %v", len(allowedKeys), allowedKeys)
+	}
+	expected := map[string]bool{"team": true, "env": true, "department": true}
+	for _, k := range allowedKeys {
+		if !expected[k] {
+			t.Errorf("unexpected allowed_metadata_key: %q", k)
+		}
+	}
+}
+
+func TestConfigAllowedMetadataKeysNotReturnedWhenEmpty(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error reading config: %v", err)
+	}
+	if readResp == nil {
+		t.Fatal("expected config response, got nil")
+	}
+	if _, exists := readResp.Data["allowed_metadata_keys"]; exists {
+		t.Fatal("expected allowed_metadata_keys to be absent when not configured")
+	}
+}
+
+func TestTokenReadWithAllowedMetadataKeys(t *testing.T) {
+	metadata := map[string]string{
+		"team":     "platform",
+		"env":      "prod",
+		"internal": "secret-value",
+	}
+	b, storage := newTestBackendWithEntity(t, "entity-meta-filter", metadata)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		if r.FormValue("team") != "platform" {
+			t.Fatalf("expected team=platform, got %q", r.FormValue("team"))
+		}
+		if r.FormValue("internal") != "" {
+			t.Fatalf("expected internal to be absent, got %q", r.FormValue("internal"))
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":             "admin-client",
+			"client_secret":         "admin-secret",
+			"url":                   "https://pingfederate.example.com:9999",
+			"token_url":             server.URL,
+			"allowed_metadata_keys": "team,env",
+			"verify_connection":     false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-meta-filter",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+}
+
+func TestTokenReadWithoutAllowedMetadataKeysSendsAll(t *testing.T) {
+	metadata := map[string]string{
+		"team":     "platform",
+		"env":      "prod",
+		"internal": "secret-value",
+	}
+	b, storage := newTestBackendWithEntity(t, "entity-meta-all", metadata)
+
+	server := newMockTokenServer(t, func(r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		for _, key := range []string{"team", "env", "internal"} {
+			if r.FormValue(key) == "" {
+				t.Fatalf("expected form parameter %q to be present", key)
+			}
+		}
+	})
+	defer server.Close()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"verify_connection": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "token",
+		Storage:   storage,
+		EntityID:  "entity-meta-all",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+}
