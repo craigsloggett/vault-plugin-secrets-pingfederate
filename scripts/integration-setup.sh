@@ -153,6 +153,16 @@ vault write identity/entity-alias \
     mount_accessor="${ACCESSOR}"
 echo "  Entity alias created."
 
+# Step 9: Create default roles for integration tests.
+echo ""
+echo "--- Creating default roles ---"
+
+# Create a brokered token role pointing to the "test" connection.
+# The integration tests will create their own connections and roles as needed,
+# but having a default available simplifies some test flows.
+vault write pingfederate/roles/test-role connection_name=test 2>/dev/null || echo "  Role test-role skipped (connection may not exist yet)."
+echo "  Default roles configured."
+
 echo ""
 echo "=== Setup complete ==="
 echo "  PingFederate: ${PF_ADMIN_URL}"

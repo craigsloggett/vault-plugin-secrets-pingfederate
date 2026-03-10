@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/sdk/framework"
@@ -12,153 +11,171 @@ import (
 )
 
 type pingFederateConfig struct {
-	AuthMethod          string   `json:"auth_method,omitempty"`
-	ClientID            string   `json:"client_id"`
-	ClientSecret        string   `json:"client_secret,omitempty"`
-	AdminUsername       string   `json:"admin_username,omitempty"`
-	AdminPassword       string   `json:"admin_password,omitempty"`
-	PrivateKey          string   `json:"private_key,omitempty"`
-	PrivateKeyID        string   `json:"private_key_id,omitempty"`
-	SigningAlgorithm    string   `json:"signing_algorithm,omitempty"`
-	URL                 string   `json:"url"`
-	TokenURL            string   `json:"token_url"`
-	InsecureTLS         bool     `json:"insecure_tls,omitempty"`
-	KeySource           string   `json:"key_source,omitempty"`
-	DefaultScope        string   `json:"default_scope,omitempty"`
-	AllowedScopes       []string `json:"allowed_scopes,omitempty"`
-	AllowedMetadataKeys []string `json:"allowed_metadata_keys,omitempty"`
+	AuthMethod       string `json:"auth_method,omitempty"`
+	ClientID         string `json:"client_id"`
+	ClientSecret     string `json:"client_secret,omitempty"`
+	AdminUsername    string `json:"admin_username,omitempty"`
+	AdminPassword    string `json:"admin_password,omitempty"`
+	PrivateKey       string `json:"private_key,omitempty"`
+	PrivateKeyID     string `json:"private_key_id,omitempty"`
+	SigningAlgorithm string `json:"signing_algorithm,omitempty"`
+	URL              string `json:"url"`
+	TokenURL         string `json:"token_url"`
+	InsecureTLS      bool   `json:"insecure_tls,omitempty"`
+	KeySource        string `json:"key_source,omitempty"`
 }
 
-func pathConfig(_ *pingFederateBackend) *framework.Path {
-	return &framework.Path{
-		Pattern:        "config",
-		ExistenceCheck: configExistenceCheck,
-		DisplayAttrs: &framework.DisplayAttributes{
-			OperationPrefix: "ping-federate",
+func pathConfig(b *pingFederateBackend) []*framework.Path {
+	return []*framework.Path{
+		{
+			Pattern:        "config/" + framework.GenericNameRegex("name"),
+			ExistenceCheck: b.configExistenceCheck,
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "ping-federate",
+			},
+			Fields: map[string]*framework.FieldSchema{
+				"name": {
+					Type:        framework.TypeLowerCaseString,
+					Description: "Name of the connection.",
+					Required:    true,
+				},
+				"auth_method": {
+					Type:        framework.TypeString,
+					Description: `Authentication method for PingFederate: "client_secret" or "private_key_jwt". Defaults to "client_secret".`,
+				},
+				"client_id": {
+					Type:        framework.TypeString,
+					Description: "The OAuth 2.0 client ID for authenticating with PingFederate.",
+					Required:    true,
+					DisplayAttrs: &framework.DisplayAttributes{
+						Sensitive: false,
+					},
+				},
+				"client_secret": {
+					Type:        framework.TypeString,
+					Description: "The OAuth 2.0 client secret for authenticating with PingFederate. Required when auth_method is client_secret.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						Sensitive: true,
+					},
+				},
+				"admin_username": {
+					Type:        framework.TypeString,
+					Description: "Username for PingFederate admin API authentication. If set, admin API operations use these credentials instead of the foothold client credentials.",
+				},
+				"admin_password": {
+					Type:        framework.TypeString,
+					Description: "Password for PingFederate admin API authentication.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						Sensitive: true,
+					},
+				},
+				"private_key": {
+					Type:        framework.TypeString,
+					Description: "PEM-encoded private key for private_key_jwt authentication. If omitted, a key is generated internally.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						Sensitive: true,
+					},
+				},
+				"private_key_id": {
+					Type:        framework.TypeString,
+					Description: "Key ID (kid) to include in JWT headers. If omitted, a UUID is generated automatically.",
+				},
+				"signing_algorithm": {
+					Type:        framework.TypeString,
+					Description: "JWT signing algorithm. One of: RS256, RS384, RS512, ES256, ES384, ES512, PS256, PS384, PS512. Defaults to RS256.",
+				},
+				"url": {
+					Type:        framework.TypeString,
+					Description: "The base URL of the PingFederate admin API (e.g. https://pingfederate.example.com:9999).",
+					Required:    true,
+				},
+				"token_url": {
+					Type:        framework.TypeString,
+					Description: "The PingFederate OAuth 2.0 token endpoint URL (e.g. https://pingfederate.example.com:9031/as/token.oauth2).",
+					Required:    true,
+				},
+				"insecure_tls": {
+					Type:        framework.TypeBool,
+					Description: "If true, skip TLS certificate verification when connecting to PingFederate. Not recommended for production.",
+				},
+				"verify_connection": {
+					Type:        framework.TypeBool,
+					Default:     true,
+					Description: "If true, verify connectivity to PingFederate before accepting the configuration.",
+				},
+			},
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ReadOperation: &framework.PathOperation{
+					Callback: b.configReadOperation,
+					Summary:  "Read a PingFederate connection configuration.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "configuration",
+					},
+				},
+				logical.CreateOperation: &framework.PathOperation{
+					Callback: b.configWriteOperation,
+					Summary:  "Configure a PingFederate connection.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "configure",
+					},
+				},
+				logical.UpdateOperation: &framework.PathOperation{
+					Callback: b.configWriteOperation,
+					Summary:  "Configure a PingFederate connection.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "configure",
+					},
+				},
+				logical.DeleteOperation: &framework.PathOperation{
+					Callback: b.configDeleteOperation,
+					Summary:  "Delete a PingFederate connection configuration.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "configuration",
+					},
+				},
+			},
+			HelpSynopsis:    "Configure a PingFederate connection.",
+			HelpDescription: "Configure the connection credentials and URLs for a PingFederate instance.",
 		},
-		Fields: map[string]*framework.FieldSchema{
-			"auth_method": {
-				Type:        framework.TypeString,
-				Description: `Authentication method for PingFederate: "client_secret" or "private_key_jwt". Defaults to "client_secret".`,
+		{
+			Pattern: "config/?$",
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "ping-federate",
 			},
-			"client_id": {
-				Type:        framework.TypeString,
-				Description: "The OAuth 2.0 client ID for authenticating with PingFederate.",
-				Required:    true,
-				DisplayAttrs: &framework.DisplayAttributes{
-					Sensitive: false,
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ListOperation: &framework.PathOperation{
+					Callback: b.configListOperation,
+					Summary:  "List configured PingFederate connections.",
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationSuffix: "connections",
+					},
 				},
 			},
-			"client_secret": {
-				Type:        framework.TypeString,
-				Description: "The OAuth 2.0 client secret for authenticating with PingFederate. Required when auth_method is client_secret.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					Sensitive: true,
-				},
-			},
-			"admin_username": {
-				Type:        framework.TypeString,
-				Description: "Username for PingFederate admin API authentication. If set, admin API operations use these credentials instead of the foothold client credentials.",
-			},
-			"admin_password": {
-				Type:        framework.TypeString,
-				Description: "Password for PingFederate admin API authentication.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					Sensitive: true,
-				},
-			},
-			"private_key": {
-				Type:        framework.TypeString,
-				Description: "PEM-encoded private key for private_key_jwt authentication. If omitted, a key is generated internally.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					Sensitive: true,
-				},
-			},
-			"private_key_id": {
-				Type:        framework.TypeString,
-				Description: "Key ID (kid) to include in JWT headers. If omitted, a UUID is generated automatically.",
-			},
-			"signing_algorithm": {
-				Type:        framework.TypeString,
-				Description: "JWT signing algorithm. One of: RS256, RS384, RS512, ES256, ES384, ES512, PS256, PS384, PS512. Defaults to RS256.",
-			},
-			"url": {
-				Type:        framework.TypeString,
-				Description: "The base URL of the PingFederate admin API (e.g. https://pingfederate.example.com:9999).",
-				Required:    true,
-			},
-			"token_url": {
-				Type:        framework.TypeString,
-				Description: "The PingFederate OAuth 2.0 token endpoint URL (e.g. https://pingfederate.example.com:9031/as/token.oauth2).",
-				Required:    true,
-			},
-			"insecure_tls": {
-				Type:        framework.TypeBool,
-				Description: "If true, skip TLS certificate verification when connecting to PingFederate. Not recommended for production.",
-			},
-			"default_scope": {
-				Type:        framework.TypeString,
-				Description: "Default OAuth 2.0 scope for brokered token requests. Used when the caller does not specify a scope.",
-			},
-			"allowed_scopes": {
-				Type:        framework.TypeCommaStringSlice,
-				Description: "Comma-separated list of permitted OAuth 2.0 scopes. If set, per-request scope values are validated against this list. If not set, any scope is allowed.",
-			},
-			"verify_connection": {
-				Type:        framework.TypeBool,
-				Default:     true,
-				Description: "If true, verify connectivity to PingFederate before accepting the configuration.",
-			},
-			"allowed_metadata_keys": {
-				Type:        framework.TypeCommaStringSlice,
-				Description: "Comma-separated list of entity metadata keys to include as claims in token requests. If not set, all metadata keys are included (except reserved OAuth parameters).",
-			},
+			HelpSynopsis:    "List configured connections.",
+			HelpDescription: "List configured PingFederate connections by name.",
 		},
-		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.ReadOperation: &framework.PathOperation{
-				Callback: configReadOperation,
-				Summary:  "Read the PingFederate connection configuration.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationSuffix: "configuration",
-				},
-			},
-			logical.CreateOperation: &framework.PathOperation{
-				Callback: configWriteOperation,
-				Summary:  "Configure the PingFederate connection.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "configure",
-				},
-			},
-			logical.UpdateOperation: &framework.PathOperation{
-				Callback: configWriteOperation,
-				Summary:  "Configure the PingFederate connection.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "configure",
-				},
-			},
-			logical.DeleteOperation: &framework.PathOperation{
-				Callback: configDeleteOperation,
-				Summary:  "Delete the PingFederate connection configuration.",
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationSuffix: "configuration",
-				},
-			},
-		},
-		HelpSynopsis:    "Configure the PingFederate connection.",
-		HelpDescription: "Configure the connection credentials and URLs for PingFederate.",
 	}
 }
 
-func configExistenceCheck(ctx context.Context, req *logical.Request, _ *framework.FieldData) (bool, error) {
-	entry, err := req.Storage.Get(ctx, "config")
+func (b *pingFederateBackend) configExistenceCheck(ctx context.Context, req *logical.Request, d *framework.FieldData) (bool, error) {
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return false, nil
+	}
+	entry, err := req.Storage.Get(ctx, "config/"+name)
 	if err != nil {
 		return false, err
 	}
 	return entry != nil, nil
 }
 
-func configReadOperation(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	cfg, err := getConfig(ctx, req.Storage)
+func (b *pingFederateBackend) configReadOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return logical.ErrorResponse("name is required"), nil
+	}
+
+	cfg, err := getConfig(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
@@ -190,23 +207,19 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	if cfg.AdminUsername != "" {
 		data["admin_username"] = cfg.AdminUsername
 	}
-	if cfg.DefaultScope != "" {
-		data["default_scope"] = cfg.DefaultScope
-	}
-	if len(cfg.AllowedScopes) > 0 {
-		data["allowed_scopes"] = cfg.AllowedScopes
-	}
-	if len(cfg.AllowedMetadataKeys) > 0 {
-		data["allowed_metadata_keys"] = cfg.AllowedMetadataKeys
-	}
 
 	return &logical.Response{
 		Data: data,
 	}, nil
 }
 
-func configWriteOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	cfg, err := getConfig(ctx, req.Storage)
+func (b *pingFederateBackend) configWriteOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return logical.ErrorResponse("name is required"), nil
+	}
+
+	cfg, err := getConfig(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
@@ -246,27 +259,6 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	}
 	if v, ok := d.GetOk("insecure_tls"); ok {
 		cfg.InsecureTLS, _ = v.(bool)
-	}
-	if v, ok := d.GetOk("default_scope"); ok {
-		cfg.DefaultScope, _ = v.(string)
-	}
-	if v, ok := d.GetOk("allowed_scopes"); ok {
-		cfg.AllowedScopes, _ = v.([]string)
-	}
-	if v, ok := d.GetOk("allowed_metadata_keys"); ok {
-		cfg.AllowedMetadataKeys, _ = v.([]string)
-	}
-
-	if len(cfg.AllowedScopes) > 0 && cfg.DefaultScope != "" {
-		allowed := make(map[string]bool, len(cfg.AllowedScopes))
-		for _, s := range cfg.AllowedScopes {
-			allowed[s] = true
-		}
-		for _, s := range strings.Fields(cfg.DefaultScope) {
-			if !allowed[s] {
-				return logical.ErrorResponse("default_scope contains %q which is not in allowed_scopes", s), nil
-			}
-		}
 	}
 
 	if cfg.ClientID == "" {
@@ -335,7 +327,7 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		}
 	}
 
-	entry, err := logical.StorageEntryJSON("config", cfg)
+	entry, err := logical.StorageEntryJSON("config/"+name, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage entry: %w", err)
 	}
@@ -349,12 +341,28 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	return resp, nil
 }
 
-func configDeleteOperation(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	if err := req.Storage.Delete(ctx, "config"); err != nil {
+func (b *pingFederateBackend) configDeleteOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return logical.ErrorResponse("name is required"), nil
+	}
+
+	if err := req.Storage.Delete(ctx, "config/"+name); err != nil {
 		return nil, fmt.Errorf("failed to delete config from storage: %w", err)
 	}
 
+	b.resetConnection(name)
+
 	return nil, nil
+}
+
+func (b *pingFederateBackend) configListOperation(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
+	connections, err := req.Storage.List(ctx, "config/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list connections: %w", err)
+	}
+
+	return logical.ListResponse(connections), nil
 }
 
 // verifyPingFederateConnection attempts a client_credentials token request
@@ -374,8 +382,8 @@ func verifyPingFederateConnection(ctx context.Context, cfg *pingFederateConfig) 
 	}
 }
 
-func getConfig(ctx context.Context, s logical.Storage) (*pingFederateConfig, error) {
-	entry, err := s.Get(ctx, "config")
+func getConfig(ctx context.Context, s logical.Storage, name string) (*pingFederateConfig, error) {
+	entry, err := s.Get(ctx, "config/"+name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config from storage: %w", err)
 	}
