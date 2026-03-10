@@ -72,35 +72,56 @@ func vaultUserClient(t *testing.T) *api.Client {
 	return client
 }
 
-// writePluginConfig writes config to the plugin.
-func writePluginConfig(t *testing.T, client *api.Client, data map[string]any) *api.Secret {
+// writePluginConfig writes config for a named connection.
+func writePluginConfig(t *testing.T, client *api.Client, connName string, data map[string]any) *api.Secret {
 	t.Helper()
 
-	secret, err := client.Logical().Write(pluginPath+"/config", data)
+	secret, err := client.Logical().Write(pluginPath+"/config/"+connName, data)
 	if err != nil {
-		t.Fatalf("failed to write plugin config: %v", err)
+		t.Fatalf("failed to write plugin config %q: %v", connName, err)
 	}
 	return secret
 }
 
-// readPluginConfig reads config from the plugin.
-func readPluginConfig(t *testing.T, client *api.Client) *api.Secret {
+// readPluginConfig reads config for a named connection.
+func readPluginConfig(t *testing.T, client *api.Client, connName string) *api.Secret {
 	t.Helper()
 
-	secret, err := client.Logical().Read(pluginPath + "/config")
+	secret, err := client.Logical().Read(pluginPath + "/config/" + connName)
 	if err != nil {
-		t.Fatalf("failed to read plugin config: %v", err)
+		t.Fatalf("failed to read plugin config %q: %v", connName, err)
 	}
 	return secret
 }
 
-// deletePluginConfig deletes the plugin config.
-func deletePluginConfig(t *testing.T, client *api.Client) {
+// deletePluginConfig deletes a named connection config.
+func deletePluginConfig(t *testing.T, client *api.Client, connName string) {
 	t.Helper()
 
-	_, err := client.Logical().Delete(pluginPath + "/config")
+	_, err := client.Logical().Delete(pluginPath + "/config/" + connName)
 	if err != nil {
-		t.Fatalf("failed to delete plugin config: %v", err)
+		t.Fatalf("failed to delete plugin config %q: %v", connName, err)
+	}
+}
+
+// writePluginRole writes a role for brokered token generation.
+func writePluginRole(t *testing.T, client *api.Client, roleName string, data map[string]any) *api.Secret {
+	t.Helper()
+
+	secret, err := client.Logical().Write(pluginPath+"/roles/"+roleName, data)
+	if err != nil {
+		t.Fatalf("failed to write plugin role %q: %v", roleName, err)
+	}
+	return secret
+}
+
+// deletePluginRole deletes a role.
+func deletePluginRole(t *testing.T, client *api.Client, roleName string) {
+	t.Helper()
+
+	_, err := client.Logical().Delete(pluginPath + "/roles/" + roleName)
+	if err != nil {
+		t.Fatalf("failed to delete plugin role %q: %v", roleName, err)
 	}
 }
 
@@ -140,7 +161,7 @@ func skipIfNotReady(t *testing.T) {
 // readJWKSRaw performs a raw HTTP GET to the JWKS endpoint (no Vault token).
 // Returns the status code and the JWKS data. If Vault wraps the response in its
 // standard envelope (with a "data" field), the inner data is extracted.
-func readJWKSRaw(t *testing.T) (int, map[string]any) {
+func readJWKSRaw(t *testing.T, connName string) (int, map[string]any) {
 	t.Helper()
 
 	addr := os.Getenv("VAULT_ADDR")
@@ -148,7 +169,7 @@ func readJWKSRaw(t *testing.T) (int, map[string]any) {
 		addr = "http://127.0.0.1:8200"
 	}
 
-	resp, err := http.Get(addr + "/v1/" + pluginPath + "/jwks") //nolint:gosec // test helper with hardcoded local URL
+	resp, err := http.Get(addr + "/v1/" + pluginPath + "/jwks/" + connName) //nolint:gosec // test helper with hardcoded local URL
 	if err != nil {
 		t.Fatalf("failed to GET JWKS: %v", err)
 	}

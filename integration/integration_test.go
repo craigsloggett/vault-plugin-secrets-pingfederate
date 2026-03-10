@@ -19,9 +19,9 @@ import (
 func TestIntegration_ConfigWrite_ClientSecret(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
@@ -29,7 +29,7 @@ func TestIntegration_ConfigWrite_ClientSecret(t *testing.T) {
 		"insecure_tls":  true,
 	})
 
-	secret := readPluginConfig(t, client)
+	secret := readPluginConfig(t, client, "test")
 	if secret == nil {
 		t.Fatal("expected config, got nil")
 	}
@@ -51,9 +51,9 @@ func TestIntegration_ConfigWrite_ClientSecret(t *testing.T) {
 func TestIntegration_ConfigWrite_PrivateKeyJWT_InternalKey(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":    "vault-foothold-jwt",
 		"auth_method":  "private_key_jwt",
 		"url":          pfAdminURL,
@@ -61,7 +61,7 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_InternalKey(t *testing.T) {
 		"insecure_tls": true,
 	})
 
-	secret := readPluginConfig(t, client)
+	secret := readPluginConfig(t, client, "test")
 	if secret == nil {
 		t.Fatal("expected config, got nil")
 	}
@@ -84,7 +84,7 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_InternalKey(t *testing.T) {
 func TestIntegration_ConfigWrite_PrivateKeyJWT_ExternalKey(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
 	// Generate an EC key to provide externally.
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -97,7 +97,7 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_ExternalKey(t *testing.T) {
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
 
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":         "vault-foothold-jwt",
 		"auth_method":       "private_key_jwt",
 		"signing_algorithm": "ES256",
@@ -107,7 +107,7 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_ExternalKey(t *testing.T) {
 		"insecure_tls":      true,
 	})
 
-	secret := readPluginConfig(t, client)
+	secret := readPluginConfig(t, client, "test")
 	if secret == nil {
 		t.Fatal("expected config, got nil")
 	}
@@ -123,10 +123,10 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_ExternalKey(t *testing.T) {
 func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
 	// Write initial config.
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
@@ -135,11 +135,11 @@ func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 	})
 
 	// Update only insecure_tls.
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"insecure_tls": false,
 	})
 
-	secret := readPluginConfig(t, client)
+	secret := readPluginConfig(t, client, "test")
 	if secret == nil {
 		t.Fatal("expected config, got nil")
 	}
@@ -164,7 +164,7 @@ func TestIntegration_ConfigDelete(t *testing.T) {
 	client := vaultClient(t)
 
 	// Write config.
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
@@ -173,10 +173,10 @@ func TestIntegration_ConfigDelete(t *testing.T) {
 	})
 
 	// Delete.
-	deletePluginConfig(t, client)
+	deletePluginConfig(t, client, "test")
 
 	// Read should return nil.
-	secret := readPluginConfig(t, client)
+	secret := readPluginConfig(t, client, "test")
 	if secret != nil {
 		t.Errorf("expected nil after delete, got: %+v", secret.Data)
 	}
@@ -189,9 +189,9 @@ func TestIntegration_ConfigDelete(t *testing.T) {
 func TestIntegration_JWKS_EmptyWithClientSecret(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
@@ -199,7 +199,7 @@ func TestIntegration_JWKS_EmptyWithClientSecret(t *testing.T) {
 		"insecure_tls":  true,
 	})
 
-	secret, err := client.Logical().Read(pluginPath + "/jwks")
+	secret, err := client.Logical().Read(pluginPath + "/jwks/test")
 	if err != nil {
 		t.Fatalf("failed to read JWKS: %v", err)
 	}
@@ -223,9 +223,9 @@ func TestIntegration_JWKS_EmptyWithClientSecret(t *testing.T) {
 func TestIntegration_JWKS_ReturnsKeyWithPrivateKeyJWT(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":    "vault-foothold-jwt",
 		"auth_method":  "private_key_jwt",
 		"url":          pfAdminURL,
@@ -234,10 +234,10 @@ func TestIntegration_JWKS_ReturnsKeyWithPrivateKeyJWT(t *testing.T) {
 	})
 
 	// Read the config to get the kid.
-	cfg := readPluginConfig(t, client)
+	cfg := readPluginConfig(t, client, "test")
 	expectedKID := requireField(t, cfg.Data, "private_key_id")
 
-	secret, err := client.Logical().Read(pluginPath + "/jwks")
+	secret, err := client.Logical().Read(pluginPath + "/jwks/test")
 	if err != nil {
 		t.Fatalf("failed to read JWKS: %v", err)
 	}
@@ -275,9 +275,9 @@ func TestIntegration_JWKS_ReturnsKeyWithPrivateKeyJWT(t *testing.T) {
 func TestIntegration_JWKS_Unauthenticated(t *testing.T) {
 	skipIfNotReady(t)
 	client := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, client) })
+	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
-	writePluginConfig(t, client, map[string]any{
+	writePluginConfig(t, client, "test", map[string]any{
 		"client_id":    "vault-foothold-jwt",
 		"auth_method":  "private_key_jwt",
 		"url":          pfAdminURL,
@@ -285,7 +285,7 @@ func TestIntegration_JWKS_Unauthenticated(t *testing.T) {
 		"insecure_tls": true,
 	})
 
-	statusCode, result := readJWKSRaw(t)
+	statusCode, result := readJWKSRaw(t, "test")
 	if statusCode != 200 {
 		t.Errorf("JWKS status = %d, want 200", statusCode)
 	}
@@ -304,15 +304,18 @@ func TestIntegration_JWKS_Unauthenticated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Token Brokering
+// Token Brokering (via creds/{role})
 // ---------------------------------------------------------------------------
 
-func TestIntegration_TokenBroker_ClientSecret(t *testing.T) {
+func TestIntegration_Creds_ClientSecret(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() {
+		deletePluginRole(t, rootClient, "test-role")
+		deletePluginConfig(t, rootClient, "test")
+	})
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
@@ -320,14 +323,18 @@ func TestIntegration_TokenBroker_ClientSecret(t *testing.T) {
 		"insecure_tls":  true,
 	})
 
+	writePluginRole(t, rootClient, "test-role", map[string]any{
+		"connection_name": "test",
+	})
+
 	userClient := vaultUserClient(t)
 
-	secret, err := userClient.Logical().Read(pluginPath + "/token")
+	secret, err := userClient.Logical().Read(pluginPath + "/creds/test-role")
 	if err != nil {
-		t.Fatalf("failed to read token: %v", err)
+		t.Fatalf("failed to read creds: %v", err)
 	}
 	if secret == nil {
-		t.Fatal("expected token response, got nil")
+		t.Fatal("expected creds response, got nil")
 	}
 
 	accessToken := requireField(t, secret.Data, "access_token")
@@ -343,12 +350,15 @@ func TestIntegration_TokenBroker_ClientSecret(t *testing.T) {
 	}
 }
 
-func TestIntegration_TokenBroker_PrivateKeyJWT(t *testing.T) {
+func TestIntegration_Creds_PrivateKeyJWT(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() {
+		deletePluginRole(t, rootClient, "test-role")
+		deletePluginConfig(t, rootClient, "test")
+	})
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":    "vault-foothold-jwt",
 		"auth_method":  "private_key_jwt",
 		"url":          pfAdminURL,
@@ -356,14 +366,18 @@ func TestIntegration_TokenBroker_PrivateKeyJWT(t *testing.T) {
 		"insecure_tls": true,
 	})
 
+	writePluginRole(t, rootClient, "test-role", map[string]any{
+		"connection_name": "test",
+	})
+
 	userClient := vaultUserClient(t)
 
-	secret, err := userClient.Logical().Read(pluginPath + "/token")
+	secret, err := userClient.Logical().Read(pluginPath + "/creds/test-role")
 	if err != nil {
-		t.Fatalf("failed to read token: %v", err)
+		t.Fatalf("failed to read creds: %v", err)
 	}
 	if secret == nil {
-		t.Fatal("expected token response, got nil")
+		t.Fatal("expected creds response, got nil")
 	}
 
 	accessToken := requireField(t, secret.Data, "access_token")
@@ -372,30 +386,37 @@ func TestIntegration_TokenBroker_PrivateKeyJWT(t *testing.T) {
 	}
 }
 
-func TestIntegration_TokenBroker_WithScope(t *testing.T) {
+func TestIntegration_Creds_WithScope(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() {
+		deletePluginRole(t, rootClient, "test-role")
+		deletePluginConfig(t, rootClient, "test")
+	})
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
 		"insecure_tls":  true,
+	})
+
+	writePluginRole(t, rootClient, "test-role", map[string]any{
+		"connection_name": "test",
 	})
 
 	userClient := vaultUserClient(t)
 
 	// Write with scope parameter (UpdateOperation).
-	secret, err := userClient.Logical().Write(pluginPath+"/token", map[string]any{
+	secret, err := userClient.Logical().Write(pluginPath+"/creds/test-role", map[string]any{
 		"scope": "openid",
 	})
 	if err != nil {
-		t.Fatalf("failed to request token with scope: %v", err)
+		t.Fatalf("failed to request creds with scope: %v", err)
 	}
 	if secret == nil {
-		t.Fatal("expected token response, got nil")
+		t.Fatal("expected creds response, got nil")
 	}
 
 	accessToken := requireField(t, secret.Data, "access_token")
@@ -404,12 +425,15 @@ func TestIntegration_TokenBroker_WithScope(t *testing.T) {
 	}
 }
 
-func TestIntegration_TokenBroker_NoEntity(t *testing.T) {
+func TestIntegration_Creds_NoEntity(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() {
+		deletePluginRole(t, rootClient, "test-role")
+		deletePluginConfig(t, rootClient, "test")
+	})
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":     "vault-foothold-secret",
 		"client_secret": footholdSecret,
 		"url":           pfAdminURL,
@@ -417,8 +441,12 @@ func TestIntegration_TokenBroker_NoEntity(t *testing.T) {
 		"insecure_tls":  true,
 	})
 
+	writePluginRole(t, rootClient, "test-role", map[string]any{
+		"connection_name": "test",
+	})
+
 	// Root token has no entity — should fail.
-	secret, err := rootClient.Logical().Read(pluginPath + "/token")
+	secret, err := rootClient.Logical().Read(pluginPath + "/creds/test-role")
 	if err != nil {
 		// API errors from logical.ErrorResponse come back as error.
 		return // expected
@@ -428,7 +456,7 @@ func TestIntegration_TokenBroker_NoEntity(t *testing.T) {
 		if _, hasError := secret.Data["error"]; hasError {
 			return // expected
 		}
-		t.Error("expected error for token request without entity, but got a response")
+		t.Error("expected error for creds request without entity, but got a response")
 	}
 }
 
@@ -439,9 +467,12 @@ func TestIntegration_TokenBroker_NoEntity(t *testing.T) {
 func TestIntegration_RotateRoot_ClientSecret(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() {
+		deletePluginRole(t, rootClient, "test-role")
+		deletePluginConfig(t, rootClient, "test")
+	})
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":      "vault-foothold-secret",
 		"client_secret":  footholdSecret,
 		"url":            pfAdminURL,
@@ -451,20 +482,24 @@ func TestIntegration_RotateRoot_ClientSecret(t *testing.T) {
 		"admin_password": pfAdminPassword,
 	})
 
+	writePluginRole(t, rootClient, "test-role", map[string]any{
+		"connection_name": "test",
+	})
+
 	// Rotate.
-	_, err := rootClient.Logical().Write(pluginPath+"/rotate-root", nil)
+	_, err := rootClient.Logical().Write(pluginPath+"/rotate-root/test", nil)
 	if err != nil {
 		t.Fatalf("failed to rotate root: %v", err)
 	}
 
 	// Verify the plugin still works — get a brokered token.
 	userClient := vaultUserClient(t)
-	secret, err := userClient.Logical().Read(pluginPath + "/token")
+	secret, err := userClient.Logical().Read(pluginPath + "/creds/test-role")
 	if err != nil {
-		t.Fatalf("token brokering failed after root rotation: %v", err)
+		t.Fatalf("creds failed after root rotation: %v", err)
 	}
 	if secret == nil {
-		t.Fatal("expected token response after rotation, got nil")
+		t.Fatal("expected creds response after rotation, got nil")
 	}
 	accessToken := requireField(t, secret.Data, "access_token")
 	if accessToken == "" {
@@ -475,9 +510,9 @@ func TestIntegration_RotateRoot_ClientSecret(t *testing.T) {
 func TestIntegration_RotateRoot_PrivateKeyJWT(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() { deletePluginConfig(t, rootClient, "test") })
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":    "vault-foothold-jwt",
 		"auth_method":  "private_key_jwt",
 		"url":          pfAdminURL,
@@ -486,11 +521,11 @@ func TestIntegration_RotateRoot_PrivateKeyJWT(t *testing.T) {
 	})
 
 	// Read initial kid.
-	cfg := readPluginConfig(t, rootClient)
+	cfg := readPluginConfig(t, rootClient, "test")
 	oldKID := requireField(t, cfg.Data, "private_key_id")
 
 	// Rotate.
-	rotateResp, err := rootClient.Logical().Write(pluginPath+"/rotate-root", nil)
+	rotateResp, err := rootClient.Logical().Write(pluginPath+"/rotate-root/test", nil)
 	if err != nil {
 		t.Fatalf("failed to rotate root: %v", err)
 	}
@@ -504,7 +539,7 @@ func TestIntegration_RotateRoot_PrivateKeyJWT(t *testing.T) {
 	}
 
 	// Verify JWKS serves the new key.
-	secret, err := rootClient.Logical().Read(pluginPath + "/jwks")
+	secret, err := rootClient.Logical().Read(pluginPath + "/jwks/test")
 	if err != nil {
 		t.Fatalf("failed to read JWKS after rotation: %v", err)
 	}
@@ -529,9 +564,9 @@ func TestIntegration_RotateRoot_PrivateKeyJWT(t *testing.T) {
 func TestIntegration_StaticRole_CRUD(t *testing.T) {
 	skipIfNotReady(t)
 	rootClient := vaultClient(t)
-	t.Cleanup(func() { deletePluginConfig(t, rootClient) })
+	t.Cleanup(func() { deletePluginConfig(t, rootClient, "test") })
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":      "vault-foothold-secret",
 		"client_secret":  footholdSecret,
 		"url":            pfAdminURL,
@@ -546,8 +581,8 @@ func TestIntegration_StaticRole_CRUD(t *testing.T) {
 
 	// Create.
 	_, err := rootClient.Logical().Write(rolePath, map[string]any{
-		"client_id": "target-service-account",
-		"ttl":       300,
+		"client_id":       "target-service-account",
+		"connection_name": "test",
 	})
 	if err != nil {
 		t.Fatalf("failed to create static role: %v", err)
@@ -564,10 +599,13 @@ func TestIntegration_StaticRole_CRUD(t *testing.T) {
 	if v := requireField(t, secret.Data, "client_id"); v != "target-service-account" {
 		t.Errorf("client_id = %q, want %q", v, "target-service-account")
 	}
+	if v := requireField(t, secret.Data, "connection_name"); v != "test" {
+		t.Errorf("connection_name = %q, want %q", v, "test")
+	}
 
-	// Update.
+	// Update with rotation_period.
 	_, err = rootClient.Logical().Write(rolePath, map[string]any{
-		"ttl": 600,
+		"rotation_period": 3600,
 	})
 	if err != nil {
 		t.Fatalf("failed to update static role: %v", err)
@@ -581,16 +619,16 @@ func TestIntegration_StaticRole_CRUD(t *testing.T) {
 	if secret == nil {
 		t.Fatal("expected static role after update, got nil")
 	}
-	ttl, ok := secret.Data["ttl"]
+	rp, ok := secret.Data["rotation_period"]
 	if !ok {
-		t.Fatal("expected ttl in static role")
+		t.Fatal("expected rotation_period in static role")
 	}
-	ttlNum, ok := ttl.(json.Number)
+	rpNum, ok := rp.(json.Number)
 	if !ok {
-		t.Fatalf("ttl type = %T, want json.Number", ttl)
+		t.Fatalf("rotation_period type = %T, want json.Number", rp)
 	}
-	if ttlNum.String() != "600" {
-		t.Errorf("ttl = %s, want 600", ttlNum.String())
+	if rpNum.String() != "3600" {
+		t.Errorf("rotation_period = %s, want 3600", rpNum.String())
 	}
 
 	// List.
@@ -641,10 +679,10 @@ func TestIntegration_StaticCreds_RetrieveToken(t *testing.T) {
 	rootClient := vaultClient(t)
 	t.Cleanup(func() {
 		rootClient.Logical().Delete(pluginPath + "/static-roles/creds-test") //nolint:errcheck
-		deletePluginConfig(t, rootClient)
+		deletePluginConfig(t, rootClient, "test")
 	})
 
-	writePluginConfig(t, rootClient, map[string]any{
+	writePluginConfig(t, rootClient, "test", map[string]any{
 		"client_id":      "vault-foothold-secret",
 		"client_secret":  footholdSecret,
 		"url":            pfAdminURL,
@@ -656,7 +694,8 @@ func TestIntegration_StaticCreds_RetrieveToken(t *testing.T) {
 
 	// Create a static role.
 	_, err := rootClient.Logical().Write(pluginPath+"/static-roles/creds-test", map[string]any{
-		"client_id": "target-service-account",
+		"client_id":       "target-service-account",
+		"connection_name": "test",
 	})
 	if err != nil {
 		t.Fatalf("failed to create static role: %v", err)

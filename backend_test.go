@@ -67,7 +67,7 @@ func writeTestConfig(t *testing.T, b logical.Backend, storage logical.Storage) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"client_id":         "admin-client",
@@ -82,6 +82,25 @@ func writeTestConfig(t *testing.T, b logical.Backend, storage logical.Storage) {
 	}
 	if resp != nil && resp.IsError() {
 		t.Fatalf("unexpected error response writing config: %v", resp.Error())
+	}
+}
+
+func writeTestRole(t *testing.T, b logical.Backend, storage logical.Storage) {
+	t.Helper()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/test-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing role: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response writing role: %v", resp.Error())
 	}
 }
 
@@ -110,7 +129,7 @@ func TestConfigReadEmpty(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -126,7 +145,7 @@ func TestConfigWriteMissingFields(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data:      map[string]any{},
 	})
@@ -143,7 +162,7 @@ func TestConfigWriteMissingTokenURL(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"client_id":     "my-client-id",
@@ -165,7 +184,7 @@ func TestConfigWriteAndRead(t *testing.T) {
 	// Write config.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"client_id":         "my-client-id",
@@ -185,7 +204,7 @@ func TestConfigWriteAndRead(t *testing.T) {
 	// Read config back.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -214,7 +233,7 @@ func TestConfigUpdate(t *testing.T) {
 	// Create initial config.
 	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"client_id":         "my-client-id",
@@ -231,7 +250,7 @@ func TestConfigUpdate(t *testing.T) {
 	// Update only the URL.
 	_, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"url":               "https://pingfederate-new.example.com:9999",
@@ -245,7 +264,7 @@ func TestConfigUpdate(t *testing.T) {
 	// Verify the update preserved existing fields.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -267,7 +286,7 @@ func TestConfigDelete(t *testing.T) {
 	// Delete config.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.DeleteOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -280,7 +299,7 @@ func TestConfigDelete(t *testing.T) {
 	// Verify it's gone.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -288,6 +307,359 @@ func TestConfigDelete(t *testing.T) {
 	}
 	if resp != nil {
 		t.Fatalf("expected nil response after delete, got %v", resp)
+	}
+}
+
+func TestConfigList(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Write a second connection.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/other",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":         "other-client",
+			"client_secret":     "other-secret",
+			"url":               "https://other.example.com:9999",
+			"token_url":         "https://other.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// List connections.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "config/",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	keys, ok := resp.Data["keys"].([]string)
+	if !ok {
+		t.Fatalf("expected keys to be []string, got %T", resp.Data["keys"])
+	}
+	if len(keys) != 2 {
+		t.Fatalf("expected 2 connections, got %d: %v", len(keys), keys)
+	}
+}
+
+func TestConfigDeleteClearsClientCache(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	b.clients["test"] = &mockPingFederateClient{}
+
+	writeTestConfig(t, b, storage)
+
+	// Delete config.
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "config/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify client was removed from cache.
+	b.lock.RLock()
+	_, exists := b.clients["test"]
+	b.lock.RUnlock()
+	if exists {
+		t.Fatal("expected client cache entry to be cleared after config delete")
+	}
+}
+
+// --- Role Tests ---
+
+func TestRoleCRUD(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Create role.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/my-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name":       "test",
+			"default_scope":         "openid",
+			"allowed_scopes":        "openid,email,profile",
+			"allowed_metadata_keys": "team,env",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Read role.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "roles/my-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	if resp.Data["name"] != "my-role" {
+		t.Fatalf("expected name 'my-role', got %v", resp.Data["name"])
+	}
+	if resp.Data["connection_name"] != "test" {
+		t.Fatalf("expected connection_name 'test', got %v", resp.Data["connection_name"])
+	}
+	if resp.Data["default_scope"] != "openid" {
+		t.Fatalf("expected default_scope 'openid', got %v", resp.Data["default_scope"])
+	}
+	allowedScopes, ok := resp.Data["allowed_scopes"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_scopes to be []string, got %T", resp.Data["allowed_scopes"])
+	}
+	if len(allowedScopes) != 3 {
+		t.Fatalf("expected 3 allowed_scopes, got %d: %v", len(allowedScopes), allowedScopes)
+	}
+	allowedKeys, ok := resp.Data["allowed_metadata_keys"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_metadata_keys to be []string, got %T", resp.Data["allowed_metadata_keys"])
+	}
+	if len(allowedKeys) != 2 {
+		t.Fatalf("expected 2 allowed_metadata_keys, got %d: %v", len(allowedKeys), allowedKeys)
+	}
+
+	// List roles.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ListOperation,
+		Path:      "roles/",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	keys, ok := resp.Data["keys"].([]string)
+	if !ok || len(keys) != 1 || keys[0] != "my-role" {
+		t.Fatalf("expected [my-role], got %v", resp.Data["keys"])
+	}
+
+	// Delete role.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "roles/my-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify it's gone.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "roles/my-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response after delete, got %v", resp)
+	}
+}
+
+func TestRoleWriteMissingConnectionName(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/bad-role",
+		Storage:   storage,
+		Data:      map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing connection_name")
+	}
+}
+
+func TestRoleWriteNonexistentConnection(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/bad-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "nonexistent",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for nonexistent connection")
+	}
+}
+
+func TestRoleWriteDefaultScopeNotInAllowedScopes(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/bad-scope-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+			"default_scope":   "openid profile",
+			"allowed_scopes":  "openid,email",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response when default_scope contains values not in allowed_scopes")
+	}
+	if !strings.Contains(resp.Error().Error(), "profile") {
+		t.Fatalf("expected error to mention 'profile', got: %s", resp.Error())
+	}
+}
+
+func TestRoleWriteDefaultScopeWithinAllowedScopes(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/good-scope-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+			"default_scope":   "openid email",
+			"allowed_scopes":  "openid,email,profile",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Verify values were stored.
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "roles/good-scope-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error reading role: %v", err)
+	}
+	if readResp.Data["default_scope"] != "openid email" {
+		t.Fatalf("expected default_scope='openid email', got %v", readResp.Data["default_scope"])
+	}
+	allowedScopes, ok := readResp.Data["allowed_scopes"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_scopes to be []string, got %T", readResp.Data["allowed_scopes"])
+	}
+	if len(allowedScopes) != 3 {
+		t.Fatalf("expected 3 allowed_scopes, got %d: %v", len(allowedScopes), allowedScopes)
+	}
+}
+
+func TestRoleAllowedMetadataKeysRoundTrip(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/meta-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name":       "test",
+			"allowed_metadata_keys": "team,env,department",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing role: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "roles/meta-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error reading role: %v", err)
+	}
+	if readResp == nil {
+		t.Fatal("expected role response, got nil")
+	}
+
+	allowedKeys, ok := readResp.Data["allowed_metadata_keys"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_metadata_keys to be []string, got %T", readResp.Data["allowed_metadata_keys"])
+	}
+	if len(allowedKeys) != 3 {
+		t.Fatalf("expected 3 allowed_metadata_keys, got %d: %v", len(allowedKeys), allowedKeys)
+	}
+	expected := map[string]bool{"team": true, "env": true, "department": true}
+	for _, k := range allowedKeys {
+		if !expected[k] {
+			t.Errorf("unexpected allowed_metadata_key: %q", k)
+		}
+	}
+}
+
+func TestRoleAllowedMetadataKeysNotReturnedWhenEmpty(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+	writeTestRole(t, b, storage)
+
+	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "roles/test-role",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error reading role: %v", err)
+	}
+	if readResp == nil {
+		t.Fatal("expected role response, got nil")
+	}
+	if _, exists := readResp.Data["allowed_metadata_keys"]; exists {
+		t.Fatal("expected allowed_metadata_keys to be absent when not configured")
 	}
 }
 
@@ -312,16 +684,17 @@ func TestStaticRoleReadConfigEmpty(t *testing.T) {
 func TestStaticRoleReadConfigReturnsConfig(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	writeTestConfig(t, b, storage)
+
 	// Write a role.
 	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
-			"ttl":       3600,
-			"max_ttl":   7200,
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -346,11 +719,8 @@ func TestStaticRoleReadConfigReturnsConfig(t *testing.T) {
 	if resp.Data["client_id"] != "terraform-client" {
 		t.Fatalf("expected client_id 'terraform-client', got %v", resp.Data["client_id"])
 	}
-	if resp.Data["ttl"] != int64(3600) {
-		t.Fatalf("expected ttl 3600, got %v", resp.Data["ttl"])
-	}
-	if resp.Data["max_ttl"] != int64(7200) {
-		t.Fatalf("expected max_ttl 7200, got %v", resp.Data["max_ttl"])
+	if resp.Data["connection_name"] != "test" {
+		t.Fatalf("expected connection_name 'test', got %v", resp.Data["connection_name"])
 	}
 	// Should NOT contain credential data.
 	if _, exists := resp.Data["access_token"]; exists {
@@ -377,14 +747,17 @@ func TestStaticCredsReadEmpty(t *testing.T) {
 func TestStaticRoleWriteAndList(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	writeTestConfig(t, b, storage)
+
 	// Write a role.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -415,12 +788,15 @@ func TestStaticRoleWriteAndList(t *testing.T) {
 func TestStaticRoleWriteMissingClientID(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	writeTestConfig(t, b, storage)
+
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      "static-roles/test-role",
 		Storage:   storage,
 		Data: map[string]any{
-			"name": "test-role",
+			"name":            "test-role",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -431,8 +807,30 @@ func TestStaticRoleWriteMissingClientID(t *testing.T) {
 	}
 }
 
+func TestStaticRoleWriteMissingConnectionName(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/test-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":      "test-role",
+			"client_id": "terraform-client",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing connection_name")
+	}
+}
+
 func TestStaticRoleDelete(t *testing.T) {
 	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
 
 	// Create a role.
 	_, err := b.HandleRequest(context.Background(), &logical.Request{
@@ -440,8 +838,9 @@ func TestStaticRoleDelete(t *testing.T) {
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -483,7 +882,7 @@ func TestStaticCredsReadGeneratesToken(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	// Inject mock client.
-	b.client = &mockPingFederateClient{}
+	b.clients["test"] = &mockPingFederateClient{}
 
 	writeTestConfig(t, b, storage)
 
@@ -493,8 +892,9 @@ func TestStaticCredsReadGeneratesToken(t *testing.T) {
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -529,8 +929,9 @@ func TestStaticCredsReadWithoutConfig(t *testing.T) {
 
 	// Write a role without configuring the backend.
 	entry, err := logical.StorageEntryJSON("static-roles/terraform", &staticRoleEntry{
-		Name:     "terraform",
-		ClientID: "terraform-client",
+		Name:           "terraform",
+		ClientID:       "terraform-client",
+		ConnectionName: "test",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -553,7 +954,7 @@ func TestStaticCredsReadWithoutConfig(t *testing.T) {
 func TestStaticCredsReadClientError(t *testing.T) {
 	b, storage := newTestBackend(t)
 
-	b.client = &mockPingFederateClient{
+	b.clients["test"] = &mockPingFederateClient{
 		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
 			return "", fmt.Errorf("PingFederate unavailable")
 		},
@@ -566,8 +967,9 @@ func TestStaticCredsReadClientError(t *testing.T) {
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -589,7 +991,7 @@ func TestStaticCredsReadClientError(t *testing.T) {
 func TestRotateRoot(t *testing.T) {
 	b, storage := newTestBackend(t)
 
-	b.client = &mockPingFederateClient{
+	b.clients["test"] = &mockPingFederateClient{
 		updateClientSecretFunc: func(_ context.Context, clientID string) (string, error) {
 			if clientID != "admin-client" {
 				t.Fatalf("expected rotation of admin-client, got %s", clientID)
@@ -603,7 +1005,7 @@ func TestRotateRoot(t *testing.T) {
 	// Rotate root.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "rotate-root",
+		Path:      "rotate-root/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -617,7 +1019,7 @@ func TestRotateRoot(t *testing.T) {
 	}
 
 	// Verify config was updated.
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("unexpected error reading config: %v", err)
 	}
@@ -631,7 +1033,7 @@ func TestRotateRootWithoutConfig(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "rotate-root",
+		Path:      "rotate-root/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -645,7 +1047,7 @@ func TestRotateRootWithoutConfig(t *testing.T) {
 func TestRotateRootPingFederateError(t *testing.T) {
 	b, storage := newTestBackend(t)
 
-	b.client = &mockPingFederateClient{
+	b.clients["test"] = &mockPingFederateClient{
 		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
 			return "", fmt.Errorf("PingFederate error")
 		},
@@ -655,7 +1057,7 @@ func TestRotateRootPingFederateError(t *testing.T) {
 
 	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "rotate-root",
+		Path:      "rotate-root/test",
 		Storage:   storage,
 	})
 	if err == nil {
@@ -702,7 +1104,7 @@ func writeTestJWTConfig(t *testing.T, b logical.Backend, storage logical.Storage
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -726,6 +1128,9 @@ func writeTestJWTConfig(t *testing.T, b logical.Backend, storage logical.Storage
 func TestConfigWriteJWT(t *testing.T) {
 	b, storage := newTestBackend(t)
 	writeTestJWTConfig(t, b, storage)
+
+	_ = b
+	_ = storage
 }
 
 func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
@@ -733,7 +1138,7 @@ func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -753,7 +1158,7 @@ func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
 	}
 
 	// Verify default signing algorithm was set.
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -767,7 +1172,7 @@ func TestConfigWriteJWTAutoGenerateKey(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -785,7 +1190,7 @@ func TestConfigWriteJWTAutoGenerateKey(t *testing.T) {
 	}
 
 	// Verify the stored config has an internally generated key.
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -812,7 +1217,7 @@ func TestConfigWriteJWTAutoGenerateKeyID(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -830,7 +1235,7 @@ func TestConfigWriteJWTAutoGenerateKeyID(t *testing.T) {
 		t.Fatalf("unexpected error response: %v", resp.Error())
 	}
 
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -847,7 +1252,7 @@ func TestConfigWriteJWTInvalidAlgorithm(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -872,7 +1277,7 @@ func TestConfigWriteJWTKeyAlgorithmMismatch(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -897,7 +1302,7 @@ func TestConfigWriteJWTInvalidKey(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":    "private_key_jwt",
@@ -921,7 +1326,7 @@ func TestConfigWriteInvalidAuthMethod(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":   "invalid_method",
@@ -948,7 +1353,7 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 	// Switch to private_key_jwt.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -966,7 +1371,7 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 	}
 
 	// Verify client_secret was cleared from storage.
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -980,7 +1385,7 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 	// Switch back to client_secret.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "client_secret",
@@ -996,7 +1401,7 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 	}
 
 	// Verify JWT fields were cleared from storage.
-	cfg, err = getConfig(context.Background(), storage)
+	cfg, err = getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1023,7 +1428,7 @@ func TestConfigReadJWT(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1055,7 +1460,7 @@ func TestConfigReadClientSecretDefaultAuthMethod(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1075,7 +1480,7 @@ func TestRotateRootJWTGeneratesNewKey(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "rotate-root",
+		Path:      "rotate-root/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1097,7 +1502,7 @@ func TestRotateRootJWTGeneratesNewKey(t *testing.T) {
 	}
 
 	// Verify the stored config has the new key.
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -1117,7 +1522,7 @@ func TestStaticCredsReadGeneratesTokenJWT(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	// Inject mock client (same interface, independent of auth method).
-	b.client = &mockPingFederateClient{}
+	b.clients["test"] = &mockPingFederateClient{}
 
 	writeTestJWTConfig(t, b, storage)
 
@@ -1127,8 +1532,9 @@ func TestStaticCredsReadGeneratesTokenJWT(t *testing.T) {
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -1157,6 +1563,8 @@ func TestStaticCredsReadGeneratesTokenJWT(t *testing.T) {
 func TestStaticRoleWriteWithRotationPeriod(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	writeTestConfig(t, b, storage)
+
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      "static-roles/terraform",
@@ -1164,6 +1572,7 @@ func TestStaticRoleWriteWithRotationPeriod(t *testing.T) {
 		Data: map[string]any{
 			"name":            "terraform",
 			"client_id":       "terraform-client",
+			"connection_name": "test",
 			"rotation_period": 3600,
 		},
 	})
@@ -1194,6 +1603,8 @@ func TestStaticRoleWriteWithRotationPeriod(t *testing.T) {
 func TestStaticRoleWriteRotationPeriodTooShort(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	writeTestConfig(t, b, storage)
+
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      "static-roles/terraform",
@@ -1201,6 +1612,7 @@ func TestStaticRoleWriteRotationPeriodTooShort(t *testing.T) {
 		Data: map[string]any{
 			"name":            "terraform",
 			"client_id":       "terraform-client",
+			"connection_name": "test",
 			"rotation_period": 30,
 		},
 	})
@@ -1216,7 +1628,7 @@ func TestPeriodicFuncRotatesWhenDue(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	rotated := false
-	b.client = &mockPingFederateClient{
+	b.clients["test"] = &mockPingFederateClient{
 		updateClientSecretFunc: func(_ context.Context, clientID string) (string, error) {
 			if clientID != "terraform-client" {
 				t.Fatalf("expected rotation of terraform-client, got %s", clientID)
@@ -1232,6 +1644,7 @@ func TestPeriodicFuncRotatesWhenDue(t *testing.T) {
 	role := &staticRoleEntry{
 		Name:           "terraform",
 		ClientID:       "terraform-client",
+		ConnectionName: "test",
 		RotationPeriod: 60 * time.Second,
 		LastRotated:    time.Now().Add(-2 * time.Hour),
 	}
@@ -1267,7 +1680,7 @@ func TestPeriodicFuncSkipsWhenNotDue(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	rotated := false
-	b.client = &mockPingFederateClient{
+	b.clients["test"] = &mockPingFederateClient{
 		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
 			rotated = true
 			return "new-secret", nil
@@ -1280,6 +1693,7 @@ func TestPeriodicFuncSkipsWhenNotDue(t *testing.T) {
 	role := &staticRoleEntry{
 		Name:           "terraform",
 		ClientID:       "terraform-client",
+		ConnectionName: "test",
 		RotationPeriod: 3600 * time.Second,
 		LastRotated:    time.Now(),
 	}
@@ -1305,7 +1719,7 @@ func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	rotated := false
-	b.client = &mockPingFederateClient{
+	b.clients["test"] = &mockPingFederateClient{
 		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
 			rotated = true
 			return "new-secret", nil
@@ -1320,8 +1734,9 @@ func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
 		Path:      "static-roles/terraform",
 		Storage:   storage,
 		Data: map[string]any{
-			"name":      "terraform",
-			"client_id": "terraform-client",
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
 		},
 	})
 	if err != nil {
@@ -1345,7 +1760,7 @@ func TestJWKSNotConfigured(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "jwks",
+		Path:      "jwks/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1370,7 +1785,7 @@ func TestJWKSClientSecretAuth(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "jwks",
+		Path:      "jwks/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1395,7 +1810,7 @@ func TestJWKSPrivateKeyJWTRSA(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "jwks",
+		Path:      "jwks/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1447,7 +1862,7 @@ func TestJWKSPrivateKeyJWTEC(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -1469,7 +1884,7 @@ func TestJWKSPrivateKeyJWTEC(t *testing.T) {
 
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "jwks",
+		Path:      "jwks/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1502,7 +1917,7 @@ func TestJWKSPrivateKeyJWTEC(t *testing.T) {
 	}
 }
 
-// --- Token Brokering Tests ---
+// --- Creds (Token Brokering) Tests ---
 
 func newTestBackendWithEntity(t *testing.T, entityID string, metadata map[string]string) (*pingFederateBackend, logical.Storage) {
 	t.Helper()
@@ -1546,12 +1961,63 @@ func newMockTokenServer(t *testing.T, validate func(r *http.Request)) *httptest.
 	}))
 }
 
-func TestTokenReadWithoutConfig(t *testing.T) {
+// writeCredsPrereqs writes a config at config/test and a role at roles/test-role
+// with the given role data merged into the base role fields.
+func writeCredsPrereqs(t *testing.T, b logical.Backend, storage logical.Storage, configData map[string]any, roleData map[string]any) {
+	t.Helper()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data:      configData,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing config: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response writing config: %v", resp.Error())
+	}
+
+	rd := map[string]any{
+		"connection_name": "test",
+	}
+	for k, v := range roleData {
+		rd[k] = v
+	}
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/test-role",
+		Storage:   storage,
+		Data:      rd,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing role: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response writing role: %v", resp.Error())
+	}
+}
+
+func TestCredsReadWithoutConfig(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-123", nil)
+
+	// Write a role directly to storage without a config.
+	entry, err := logical.StorageEntryJSON("roles/test-role", &roleEntry{
+		Name:           "test-role",
+		ConnectionName: "test",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := storage.Put(context.Background(), entry); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-123",
 	})
@@ -1559,16 +2025,33 @@ func TestTokenReadWithoutConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response for unconfigured backend")
+		t.Fatal("expected error response for unconfigured connection")
 	}
 }
 
-func TestTokenReadWithoutEntityID(t *testing.T) {
+func TestCredsReadNonexistentRole(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-123", nil)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/nonexistent",
+		Storage:   storage,
+		EntityID:  "entity-123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for nonexistent role")
+	}
+}
+
+func TestCredsReadWithoutEntityID(t *testing.T) {
+	b, storage := newTestBackendWithEntity(t, "entity-123", nil)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "",
 	})
@@ -1580,7 +2063,7 @@ func TestTokenReadWithoutEntityID(t *testing.T) {
 	}
 }
 
-func TestTokenReadBasicAuth(t *testing.T) {
+func TestCredsReadBasicAuth(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-abc-123", map[string]string{
 		"team": "platform",
 		"env":  "prod",
@@ -1607,29 +2090,17 @@ func TestTokenReadBasicAuth(t *testing.T) {
 	})
 	defer server.Close()
 
-	// Write config with token_url pointing to mock server.
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, nil)
 
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-abc-123",
 	})
@@ -1647,7 +2118,7 @@ func TestTokenReadBasicAuth(t *testing.T) {
 	}
 }
 
-func TestTokenReadJWTAuth(t *testing.T) {
+func TestCredsReadJWTAuth(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-jwt-789", map[string]string{
 		"app": "my-service",
 	})
@@ -1678,31 +2149,20 @@ func TestTokenReadJWTAuth(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"auth_method":       "private_key_jwt",
-			"client_id":         "jwt-admin-client",
-			"private_key":       testRSAPrivateKeyPEM(t),
-			"private_key_id":    "key-1",
-			"signing_algorithm": "RS256",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"auth_method":       "private_key_jwt",
+		"client_id":         "jwt-admin-client",
+		"private_key":       testRSAPrivateKeyPEM(t),
+		"private_key_id":    "key-1",
+		"signing_algorithm": "RS256",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, nil)
 
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-jwt-789",
 	})
@@ -1717,7 +2177,7 @@ func TestTokenReadJWTAuth(t *testing.T) {
 	}
 }
 
-func TestTokenWriteWithScope(t *testing.T) {
+func TestCredsWriteWithScope(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-scope-1", nil)
 
 	server := newMockTokenServer(t, func(r *http.Request) {
@@ -1730,28 +2190,17 @@ func TestTokenWriteWithScope(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, nil)
 
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-scope-1",
 		Data: map[string]any{
@@ -1769,7 +2218,7 @@ func TestTokenWriteWithScope(t *testing.T) {
 	}
 }
 
-func TestTokenReadReservedMetadataKeysWarning(t *testing.T) {
+func TestCredsReadReservedMetadataKeysWarning(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-reserved-1", map[string]string{
 		"grant_type": "authorization_code",
 		"client_id":  "evil-client",
@@ -1791,28 +2240,17 @@ func TestTokenReadReservedMetadataKeysWarning(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, nil)
 
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-reserved-1",
 	})
@@ -1845,7 +2283,7 @@ func TestConfigWriteAutoGenerateEC(t *testing.T) {
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -1863,7 +2301,7 @@ func TestConfigWriteAutoGenerateEC(t *testing.T) {
 		t.Fatalf("unexpected error response: %v", resp.Error())
 	}
 
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -1888,7 +2326,7 @@ func TestConfigReadKeySource(t *testing.T) {
 	// Write config with auto-generated key.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -1908,7 +2346,7 @@ func TestConfigReadKeySource(t *testing.T) {
 	// Read and verify key_source is surfaced.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1928,7 +2366,7 @@ func TestJWKSAfterAutoGenerate(t *testing.T) {
 	// Write config with auto-generated key.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -1948,7 +2386,7 @@ func TestJWKSAfterAutoGenerate(t *testing.T) {
 	// Read JWKS — should have a key.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "jwks",
+		Path:      "jwks/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -1973,7 +2411,7 @@ func TestRotateRootPrivateKeyJWTKeyChanges(t *testing.T) {
 	// Write config with auto-generated key.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -1991,7 +2429,7 @@ func TestRotateRootPrivateKeyJWTKeyChanges(t *testing.T) {
 	}
 
 	// Capture the original key and kid.
-	cfg1, err := getConfig(context.Background(), storage)
+	cfg1, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -2001,7 +2439,7 @@ func TestRotateRootPrivateKeyJWTKeyChanges(t *testing.T) {
 	// Rotate.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "rotate-root",
+		Path:      "rotate-root/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -2012,7 +2450,7 @@ func TestRotateRootPrivateKeyJWTKeyChanges(t *testing.T) {
 	}
 
 	// Verify the key and kid have changed.
-	cfg2, err := getConfig(context.Background(), storage)
+	cfg2, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -2033,7 +2471,7 @@ func TestRotateRootPrivateKeyJWTEC(t *testing.T) {
 	// Write config with ES256 auto-generated key.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -2051,7 +2489,7 @@ func TestRotateRootPrivateKeyJWTEC(t *testing.T) {
 		t.Fatalf("unexpected error response: %v", resp.Error())
 	}
 
-	cfg1, err := getConfig(context.Background(), storage)
+	cfg1, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -2061,7 +2499,7 @@ func TestRotateRootPrivateKeyJWTEC(t *testing.T) {
 	// Rotate.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "rotate-root",
+		Path:      "rotate-root/test",
 		Storage:   storage,
 	})
 	if err != nil {
@@ -2074,7 +2512,7 @@ func TestRotateRootPrivateKeyJWTEC(t *testing.T) {
 		t.Fatalf("expected signing_algorithm=ES256, got %v", resp.Data["signing_algorithm"])
 	}
 
-	cfg2, err := getConfig(context.Background(), storage)
+	cfg2, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -2101,7 +2539,7 @@ func TestConfigUpdateRetainsKeySource(t *testing.T) {
 	// Create config with auto-generated key.
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -2119,7 +2557,7 @@ func TestConfigUpdateRetainsKeySource(t *testing.T) {
 	}
 
 	// Verify initial state.
-	cfg, err := getConfig(context.Background(), storage)
+	cfg, err := getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -2131,7 +2569,7 @@ func TestConfigUpdateRetainsKeySource(t *testing.T) {
 	// Update only client_id, without providing private_key.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"client_id":         "updated-client",
@@ -2146,7 +2584,7 @@ func TestConfigUpdateRetainsKeySource(t *testing.T) {
 	}
 
 	// Verify key_source is still internal and key didn't change.
-	cfg, err = getConfig(context.Background(), storage)
+	cfg, err = getConfig(context.Background(), storage, "test")
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -2167,7 +2605,7 @@ func TestConfigUpdateRejectsAlgorithmMismatch(t *testing.T) {
 	// Create config with auto-generated RSA key (default RS256).
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"auth_method":       "private_key_jwt",
@@ -2187,7 +2625,7 @@ func TestConfigUpdateRejectsAlgorithmMismatch(t *testing.T) {
 	// Try to change signing_algorithm to ES256 without providing a new EC key.
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "config",
+		Path:      "config/test",
 		Storage:   storage,
 		Data: map[string]any{
 			"signing_algorithm": "ES256",
@@ -2201,79 +2639,7 @@ func TestConfigUpdateRejectsAlgorithmMismatch(t *testing.T) {
 	}
 }
 
-func TestConfigWriteDefaultScopeNotInAllowedScopes(t *testing.T) {
-	b, storage := newTestBackend(t)
-
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":      "scope-client",
-			"client_secret":  "scope-secret",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
-			"default_scope":  "openid profile",
-			"allowed_scopes": "openid,email",
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil || !resp.IsError() {
-		t.Fatal("expected error response when default_scope contains values not in allowed_scopes")
-	}
-	if !strings.Contains(resp.Error().Error(), "profile") {
-		t.Fatalf("expected error to mention 'profile', got: %s", resp.Error())
-	}
-}
-
-func TestConfigWriteDefaultScopeWithinAllowedScopes(t *testing.T) {
-	b, storage := newTestBackend(t)
-
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "scope-client",
-			"client_secret":     "scope-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
-			"default_scope":     "openid email",
-			"allowed_scopes":    "openid,email,profile",
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
-
-	// Verify values were stored.
-	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.ReadOperation,
-		Path:      "config",
-		Storage:   storage,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error reading config: %v", err)
-	}
-	if readResp.Data["default_scope"] != "openid email" {
-		t.Fatalf("expected default_scope='openid email', got %v", readResp.Data["default_scope"])
-	}
-	allowedScopes, ok := readResp.Data["allowed_scopes"].([]string)
-	if !ok {
-		t.Fatalf("expected allowed_scopes to be []string, got %T", readResp.Data["allowed_scopes"])
-	}
-	if len(allowedScopes) != 3 {
-		t.Fatalf("expected 3 allowed_scopes, got %d: %v", len(allowedScopes), allowedScopes)
-	}
-}
-
-func TestTokenReadDefaultScope(t *testing.T) {
+func TestCredsReadDefaultScope(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-default-scope", nil)
 
 	server := newMockTokenServer(t, func(r *http.Request) {
@@ -2286,30 +2652,20 @@ func TestTokenReadDefaultScope(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"default_scope":     "openid",
-			"verify_connection": false,
-		},
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, map[string]any{
+		"default_scope": "openid",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
 
-	// Request token without specifying scope — should use default_scope.
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	// Request creds without specifying scope — should use default_scope from role.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-default-scope",
 	})
@@ -2324,7 +2680,7 @@ func TestTokenReadDefaultScope(t *testing.T) {
 	}
 }
 
-func TestTokenReadScopeOverridesDefault(t *testing.T) {
+func TestCredsReadScopeOverridesDefault(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-override-scope", nil)
 
 	server := newMockTokenServer(t, func(r *http.Request) {
@@ -2337,30 +2693,20 @@ func TestTokenReadScopeOverridesDefault(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"default_scope":     "openid",
-			"verify_connection": false,
-		},
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, map[string]any{
+		"default_scope": "openid",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
 
-	// Request token with explicit scope — should override default_scope.
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	// Request creds with explicit scope — should override default_scope.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-override-scope",
 		Data: map[string]any{
@@ -2375,36 +2721,26 @@ func TestTokenReadScopeOverridesDefault(t *testing.T) {
 	}
 }
 
-func TestTokenReadScopeNotInAllowedScopes(t *testing.T) {
+func TestCredsReadScopeNotInAllowedScopes(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-bad-scope", nil)
 
 	server := newMockTokenServer(t, nil)
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"allowed_scopes":    "openid,email",
-			"verify_connection": false,
-		},
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, map[string]any{
+		"allowed_scopes": "openid,email",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
 
-	// Request token with a scope not in allowed_scopes.
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	// Request creds with a scope not in allowed_scopes.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-bad-scope",
 		Data: map[string]any{
@@ -2422,7 +2758,7 @@ func TestTokenReadScopeNotInAllowedScopes(t *testing.T) {
 	}
 }
 
-func TestTokenReadScopeInAllowedScopes(t *testing.T) {
+func TestCredsReadScopeInAllowedScopes(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-good-scope", nil)
 
 	server := newMockTokenServer(t, func(r *http.Request) {
@@ -2435,30 +2771,20 @@ func TestTokenReadScopeInAllowedScopes(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"allowed_scopes":    "openid,email,profile",
-			"verify_connection": false,
-		},
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, map[string]any{
+		"allowed_scopes": "openid,email,profile",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
 
-	// Request token with allowed scopes.
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	// Request creds with allowed scopes.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-good-scope",
 		Data: map[string]any{
@@ -2473,7 +2799,7 @@ func TestTokenReadScopeInAllowedScopes(t *testing.T) {
 	}
 }
 
-func TestTokenReadNoScopeNoDefaultNoAllowed(t *testing.T) {
+func TestCredsReadNoScopeNoDefaultNoAllowed(t *testing.T) {
 	b, storage := newTestBackendWithEntity(t, "entity-no-scope", nil)
 
 	server := newMockTokenServer(t, func(r *http.Request) {
@@ -2486,29 +2812,18 @@ func TestTokenReadNoScopeNoDefaultNoAllowed(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, nil)
 
 	// No scope, no default — should pass through without scope param.
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-no-scope",
 	})
@@ -2637,7 +2952,7 @@ func TestVerifyConnection(t *testing.T) {
 
 			resp, err := b.HandleRequest(context.Background(), &logical.Request{
 				Operation: logical.CreateOperation,
-				Path:      "config",
+				Path:      "config/test",
 				Storage:   storage,
 				Data:      data,
 			})
@@ -2659,7 +2974,7 @@ func TestVerifyConnection(t *testing.T) {
 			}
 
 			// Check whether config was persisted.
-			cfg, err := getConfig(context.Background(), storage)
+			cfg, err := getConfig(context.Background(), storage, "test")
 			if err != nil {
 				t.Fatalf("unexpected error reading config: %v", err)
 			}
@@ -2673,80 +2988,9 @@ func TestVerifyConnection(t *testing.T) {
 	}
 }
 
-// --- Allowed Metadata Keys Tests ---
+// --- Creds with Allowed Metadata Keys Tests ---
 
-func TestConfigAllowedMetadataKeysRoundTrip(t *testing.T) {
-	b, storage := newTestBackend(t)
-
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":             "admin-client",
-			"client_secret":         "admin-secret",
-			"url":                   "https://pingfederate.example.com:9999",
-			"token_url":             "https://pingfederate.example.com:9031/as/token.oauth2",
-			"allowed_metadata_keys": "team,env,department",
-			"verify_connection":     false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
-
-	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.ReadOperation,
-		Path:      "config",
-		Storage:   storage,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error reading config: %v", err)
-	}
-	if readResp == nil {
-		t.Fatal("expected config response, got nil")
-	}
-
-	allowedKeys, ok := readResp.Data["allowed_metadata_keys"].([]string)
-	if !ok {
-		t.Fatalf("expected allowed_metadata_keys to be []string, got %T", readResp.Data["allowed_metadata_keys"])
-	}
-	if len(allowedKeys) != 3 {
-		t.Fatalf("expected 3 allowed_metadata_keys, got %d: %v", len(allowedKeys), allowedKeys)
-	}
-	expected := map[string]bool{"team": true, "env": true, "department": true}
-	for _, k := range allowedKeys {
-		if !expected[k] {
-			t.Errorf("unexpected allowed_metadata_key: %q", k)
-		}
-	}
-}
-
-func TestConfigAllowedMetadataKeysNotReturnedWhenEmpty(t *testing.T) {
-	b, storage := newTestBackend(t)
-
-	writeTestConfig(t, b, storage)
-
-	readResp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.ReadOperation,
-		Path:      "config",
-		Storage:   storage,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error reading config: %v", err)
-	}
-	if readResp == nil {
-		t.Fatal("expected config response, got nil")
-	}
-	if _, exists := readResp.Data["allowed_metadata_keys"]; exists {
-		t.Fatal("expected allowed_metadata_keys to be absent when not configured")
-	}
-}
-
-func TestTokenReadWithAllowedMetadataKeys(t *testing.T) {
+func TestCredsReadWithAllowedMetadataKeys(t *testing.T) {
 	metadata := map[string]string{
 		"team":     "platform",
 		"env":      "prod",
@@ -2767,29 +3011,19 @@ func TestTokenReadWithAllowedMetadataKeys(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":             "admin-client",
-			"client_secret":         "admin-secret",
-			"url":                   "https://pingfederate.example.com:9999",
-			"token_url":             server.URL,
-			"allowed_metadata_keys": "team,env",
-			"verify_connection":     false,
-		},
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, map[string]any{
+		"allowed_metadata_keys": "team,env",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
 
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-meta-filter",
 	})
@@ -2801,7 +3035,7 @@ func TestTokenReadWithAllowedMetadataKeys(t *testing.T) {
 	}
 }
 
-func TestTokenReadWithoutAllowedMetadataKeysSendsAll(t *testing.T) {
+func TestCredsReadWithoutAllowedMetadataKeysSendsAll(t *testing.T) {
 	metadata := map[string]string{
 		"team":     "platform",
 		"env":      "prod",
@@ -2821,28 +3055,17 @@ func TestTokenReadWithoutAllowedMetadataKeysSendsAll(t *testing.T) {
 	})
 	defer server.Close()
 
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":         "admin-client",
-			"client_secret":     "admin-secret",
-			"url":               "https://pingfederate.example.com:9999",
-			"token_url":         server.URL,
-			"verify_connection": false,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error writing config: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
+	writeCredsPrereqs(t, b, storage, map[string]any{
+		"client_id":         "admin-client",
+		"client_secret":     "admin-secret",
+		"url":               "https://pingfederate.example.com:9999",
+		"token_url":         server.URL,
+		"verify_connection": false,
+	}, nil)
 
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
-		Path:      "token",
+		Path:      "creds/test-role",
 		Storage:   storage,
 		EntityID:  "entity-meta-all",
 	})

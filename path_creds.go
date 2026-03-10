@@ -9,28 +9,33 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathToken(b *pingFederateBackend) *framework.Path {
+func pathCreds(b *pingFederateBackend) *framework.Path {
 	return &framework.Path{
-		Pattern: "token",
+		Pattern: "creds/" + framework.GenericNameRegex("name"),
 		DisplayAttrs: &framework.DisplayAttributes{
 			OperationPrefix: "ping-federate",
 		},
 		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeLowerCaseString,
+				Description: "Name of the role.",
+				Required:    true,
+			},
 			"scope": {
 				Type:        framework.TypeString,
-				Description: "OAuth 2.0 scope to request. If omitted, PingFederate uses the client's default scope.",
+				Description: "OAuth 2.0 scope to request. If omitted, the role's default_scope is used.",
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
-				Callback: b.tokenReadOperation,
+				Callback: b.credsReadOperation,
 				Summary:  "Obtain a brokered token from PingFederate enriched with the caller's Vault identity.",
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationSuffix: "brokered-token",
 				},
 			},
 			logical.UpdateOperation: &framework.PathOperation{
-				Callback: b.tokenReadOperation,
+				Callback: b.credsReadOperation,
 				Summary:  "Obtain a brokered token from PingFederate enriched with the caller's Vault identity.",
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationSuffix: "brokered-token",
@@ -42,20 +47,33 @@ func pathToken(b *pingFederateBackend) *framework.Path {
 	}
 }
 
-func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+func (b *pingFederateBackend) credsReadOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	if req.EntityID == "" {
 		return logical.ErrorResponse("this endpoint requires an authenticated caller with a Vault identity entity"), nil
 	}
 
-	cfg, err := getConfig(ctx, req.Storage)
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return logical.ErrorResponse("name is required"), nil
+	}
+
+	role, err := getRole(ctx, req.Storage, name)
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
+		return logical.ErrorResponse("role %q not found", name), nil
+	}
+
+	cfg, err := getConfig(ctx, req.Storage, role.ConnectionName)
 	if err != nil {
 		return nil, err
 	}
 	if cfg == nil {
-		return logical.ErrorResponse("backend not configured"), nil
+		return logical.ErrorResponse("connection %q not configured", role.ConnectionName), nil
 	}
 
-	client, err := b.getClient(ctx, req.Storage)
+	client, err := b.getClientForConnection(ctx, req.Storage, role.ConnectionName)
 	if err != nil {
 		return nil, err
 	}
@@ -72,13 +90,13 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 
 	scope, _ := d.Get("scope").(string)
 
-	if scope == "" && cfg.DefaultScope != "" {
-		scope = cfg.DefaultScope
+	if scope == "" && role.DefaultScope != "" {
+		scope = role.DefaultScope
 	}
 
-	if scope != "" && len(cfg.AllowedScopes) > 0 {
-		allowed := make(map[string]bool, len(cfg.AllowedScopes))
-		for _, s := range cfg.AllowedScopes {
+	if scope != "" && len(role.AllowedScopes) > 0 {
+		allowed := make(map[string]bool, len(role.AllowedScopes))
+		for _, s := range role.AllowedScopes {
 			allowed[s] = true
 		}
 		for _, s := range strings.Fields(scope) {
@@ -88,7 +106,7 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 		}
 	}
 
-	tokenResp, skippedKeys, err := getBrokeredToken(ctx, client.HTTPClient(), cfg, scope, req.EntityID, metadata, cfg.AllowedMetadataKeys)
+	tokenResp, skippedKeys, err := getBrokeredToken(ctx, client.HTTPClient(), cfg, scope, req.EntityID, metadata, role.AllowedMetadataKeys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain brokered token: %w", err)
 	}

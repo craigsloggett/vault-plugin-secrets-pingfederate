@@ -16,7 +16,7 @@ type pingFederateBackend struct {
 	*framework.Backend
 
 	lock           sync.RWMutex
-	client         PingFederateClient
+	clients        map[string]PingFederateClient
 	rotateRootLock int32
 }
 
@@ -32,27 +32,30 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 }
 
 func backend() *pingFederateBackend {
-	b := &pingFederateBackend{}
+	b := &pingFederateBackend{
+		clients: make(map[string]PingFederateClient),
+	}
 
 	b.Backend = &framework.Backend{
 		Help: strings.TrimSpace(backendHelp),
 		PathsSpecial: &logical.Paths{
 			Root: []string{
-				"rotate-root",
+				"rotate-root/*",
 			},
 			Unauthenticated: []string{
-				"jwks",
+				"jwks/*",
 			},
 			SealWrapStorage: []string{
-				"config",
+				"config/*",
 			},
 		},
 		Paths: framework.PathAppend(
+			pathConfig(b),
+			pathRoles(b),
 			[]*framework.Path{
-				pathConfig(b),
+				pathCreds(b),
 				pathJWKS(b),
 				pathRotateRoot(b),
-				pathToken(b),
 			},
 			pathStaticRoles(b),
 		),
@@ -65,46 +68,49 @@ func backend() *pingFederateBackend {
 }
 
 func (b *pingFederateBackend) invalidate(_ context.Context, key string) {
-	if key == "config" {
-		b.reset()
+	if strings.HasPrefix(key, "config/") {
+		name := strings.TrimPrefix(key, "config/")
+		b.resetConnection(name)
 	}
 }
 
-func (b *pingFederateBackend) reset() {
+func (b *pingFederateBackend) resetConnection(name string) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	b.client = nil
+	delete(b.clients, name)
 }
 
-func (b *pingFederateBackend) getClient(ctx context.Context, s logical.Storage) (PingFederateClient, error) {
+func (b *pingFederateBackend) getClientForConnection(ctx context.Context, s logical.Storage, connName string) (PingFederateClient, error) {
 	b.lock.RLock()
-	if b.client != nil {
+	if client, ok := b.clients[connName]; ok {
 		defer b.lock.RUnlock()
-		return b.client, nil
+		return client, nil
 	}
 	b.lock.RUnlock()
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	if b.client != nil {
-		return b.client, nil
+	if client, ok := b.clients[connName]; ok {
+		return client, nil
 	}
 
-	cfg, err := getConfig(ctx, s)
+	cfg, err := getConfig(ctx, s, connName)
 	if err != nil {
 		return nil, err
 	}
 	if cfg == nil {
-		return nil, fmt.Errorf("backend not configured")
+		return nil, fmt.Errorf("connection %q not configured", connName)
 	}
 
+	var client PingFederateClient
 	if cfg.AuthMethod == "private_key_jwt" {
-		b.client = newPingFederateJWTClient(cfg)
+		client = newPingFederateJWTClient(cfg)
 	} else {
-		b.client = newPingFederateClient(cfg)
+		client = newPingFederateClient(cfg)
 	}
-	return b.client, nil
+	b.clients[connName] = client
+	return client, nil
 }
 
 // periodicFunc is called by Vault's rollback manager on a regular interval.
@@ -141,9 +147,14 @@ func (b *pingFederateBackend) rotateStaticRoleIfDue(ctx context.Context, s logic
 		return nil
 	}
 
-	client, err := b.getClient(ctx, s)
+	if role.ConnectionName == "" {
+		logger.Error("static role missing connection_name, skipping rotation", "role", roleName)
+		return nil
+	}
+
+	client, err := b.getClientForConnection(ctx, s, role.ConnectionName)
 	if err != nil {
-		return fmt.Errorf("failed to get client: %w", err)
+		return fmt.Errorf("failed to get client for connection %q: %w", role.ConnectionName, err)
 	}
 
 	_, err = client.UpdateClientSecret(ctx, role.ClientID)

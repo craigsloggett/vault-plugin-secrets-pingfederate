@@ -12,39 +12,51 @@ import (
 
 func pathRotateRoot(b *pingFederateBackend) *framework.Path {
 	return &framework.Path{
-		Pattern: "rotate-root",
+		Pattern: "rotate-root/" + framework.GenericNameRegex("name"),
 		DisplayAttrs: &framework.DisplayAttributes{
 			OperationPrefix: "ping-federate",
+		},
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeLowerCaseString,
+				Description: "Name of the connection.",
+				Required:    true,
+			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.UpdateOperation: &framework.PathOperation{
 				Callback:                    b.rotateRootOperation,
 				ForwardPerformanceStandby:   true,
 				ForwardPerformanceSecondary: true,
-				Summary:                     "Rotate the root credentials for the PingFederate connection.",
+				Summary:                     "Rotate the root credentials for a PingFederate connection.",
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb:   "rotate",
 					OperationSuffix: "root-credentials",
 				},
 			},
 		},
-		HelpSynopsis:    "Rotate the root credentials for the PingFederate connection.",
+		HelpSynopsis:    "Rotate the root credentials for a PingFederate connection.",
 		HelpDescription: "Rotate the foothold client secret used to authenticate with the PingFederate admin API.",
 	}
 }
 
-func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
+func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	if !atomic.CompareAndSwapInt32(&b.rotateRootLock, 0, 1) {
 		return logical.ErrorResponse("root credential rotation already in progress"), nil
 	}
 	defer atomic.StoreInt32(&b.rotateRootLock, 0)
 
-	cfg, err := getConfig(ctx, req.Storage)
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return logical.ErrorResponse("name is required"), nil
+	}
+
+	cfg, err := getConfig(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
 	if cfg == nil {
-		return logical.ErrorResponse("backend not configured"), nil
+		return logical.ErrorResponse("connection %q not configured", name), nil
 	}
 
 	if cfg.AuthMethod == "private_key_jwt" {
@@ -64,14 +76,14 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 		cfg.PrivateKeyID = kid
 		cfg.KeySource = "internal"
 
-		entry, err := logical.StorageEntryJSON("config", cfg)
+		entry, err := logical.StorageEntryJSON("config/"+name, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create storage entry: %w", err)
 		}
 		if err := req.Storage.Put(ctx, entry); err != nil {
 			return nil, fmt.Errorf("failed to write updated config to storage: %w", err)
 		}
-		b.reset()
+		b.resetConnection(name)
 
 		resp := &logical.Response{
 			Data: map[string]any{
@@ -85,7 +97,7 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 		return resp, nil
 	}
 
-	client, err := b.getClient(ctx, req.Storage)
+	client, err := b.getClientForConnection(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +109,7 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 
 	cfg.ClientSecret = newSecret
 
-	entry, err := logical.StorageEntryJSON("config", cfg)
+	entry, err := logical.StorageEntryJSON("config/"+name, cfg)
 	if err != nil {
 		b.logRootRotationFailure(cfg.ClientID)
 		return nil, fmt.Errorf("failed to create storage entry: %w", err)
@@ -108,7 +120,7 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 		return nil, fmt.Errorf("failed to write updated config to storage: %w", err)
 	}
 
-	b.reset()
+	b.resetConnection(name)
 
 	resp := &logical.Response{}
 	resp.AddWarning("Root credentials have been rotated. The previous credentials are no longer valid.")

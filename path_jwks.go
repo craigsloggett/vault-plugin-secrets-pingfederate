@@ -13,9 +13,16 @@ import (
 
 func pathJWKS(_ *pingFederateBackend) *framework.Path {
 	return &framework.Path{
-		Pattern: "jwks",
+		Pattern: "jwks/" + framework.GenericNameRegex("name"),
 		DisplayAttrs: &framework.DisplayAttributes{
 			OperationPrefix: "ping-federate",
+		},
+		Fields: map[string]*framework.FieldSchema{
+			"name": {
+				Type:        framework.TypeLowerCaseString,
+				Description: "Name of the connection.",
+				Required:    true,
+			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
@@ -31,8 +38,13 @@ func pathJWKS(_ *pingFederateBackend) *framework.Path {
 	}
 }
 
-func jwksReadOperation(ctx context.Context, req *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
-	cfg, err := getConfig(ctx, req.Storage)
+func jwksReadOperation(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	name, ok := d.Get("name").(string)
+	if !ok {
+		return logical.ErrorResponse("name is required"), nil
+	}
+
+	cfg, err := getConfig(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
 	}
