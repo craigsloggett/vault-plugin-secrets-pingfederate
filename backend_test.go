@@ -206,48 +206,6 @@ func TestConfigWriteAndRead(t *testing.T) {
 	}
 }
 
-func TestConfigWriteWithTTL(t *testing.T) {
-	b, storage := newTestBackend(t)
-
-	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.CreateOperation,
-		Path:      "config",
-		Storage:   storage,
-		Data: map[string]any{
-			"client_id":     "my-client-id",
-			"client_secret": "my-client-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     "https://pingfederate.example.com:9031/as/token.oauth2",
-			"default_ttl":   3600,
-			"max_ttl":       7200,
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp != nil && resp.IsError() {
-		t.Fatalf("unexpected error response: %v", resp.Error())
-	}
-
-	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.ReadOperation,
-		Path:      "config",
-		Storage:   storage,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected response, got nil")
-	}
-	if resp.Data["default_ttl"] != int64(3600) {
-		t.Fatalf("expected default_ttl 3600, got %v", resp.Data["default_ttl"])
-	}
-	if resp.Data["max_ttl"] != int64(7200) {
-		t.Fatalf("expected max_ttl 7200, got %v", resp.Data["max_ttl"])
-	}
-}
-
 func TestConfigUpdate(t *testing.T) {
 	b, storage := newTestBackend(t)
 

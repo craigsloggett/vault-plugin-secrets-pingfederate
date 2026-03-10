@@ -132,12 +132,11 @@ func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 		"url":           pfAdminURL,
 		"token_url":     pfTokenURL,
 		"insecure_tls":  true,
-		"default_ttl":   300,
 	})
 
-	// Update only default_ttl.
+	// Update only insecure_tls.
 	writePluginConfig(t, client, map[string]any{
-		"default_ttl": 600,
+		"insecure_tls": false,
 	})
 
 	secret := readPluginConfig(t, client)
@@ -146,16 +145,12 @@ func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 	}
 
 	// Verify updated field.
-	ttl, ok := secret.Data["default_ttl"]
+	insecure, ok := secret.Data["insecure_tls"]
 	if !ok {
-		t.Fatal("expected default_ttl in response")
+		t.Fatal("expected insecure_tls in response")
 	}
-	ttlNum, ok := ttl.(json.Number)
-	if !ok {
-		t.Fatalf("default_ttl type = %T, want json.Number", ttl)
-	}
-	if ttlNum.String() != "600" {
-		t.Errorf("default_ttl = %s, want 600", ttlNum.String())
+	if insecure != false {
+		t.Errorf("insecure_tls = %v, want false", insecure)
 	}
 
 	// Verify other fields retained.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/sdk/framework"
@@ -13,22 +12,20 @@ import (
 )
 
 type pingFederateConfig struct {
-	AuthMethod       string        `json:"auth_method,omitempty"`
-	ClientID         string        `json:"client_id"`
-	ClientSecret     string        `json:"client_secret,omitempty"`
-	AdminUsername    string        `json:"admin_username,omitempty"`
-	AdminPassword    string        `json:"admin_password,omitempty"`
-	PrivateKey       string        `json:"private_key,omitempty"`
-	PrivateKeyID     string        `json:"private_key_id,omitempty"`
-	SigningAlgorithm string        `json:"signing_algorithm,omitempty"`
-	URL              string        `json:"url"`
-	TokenURL         string        `json:"token_url"`
-	InsecureTLS      bool          `json:"insecure_tls,omitempty"`
-	DefaultTTL       time.Duration `json:"default_ttl,omitempty"`
-	MaxTTL           time.Duration `json:"max_ttl,omitempty"`
-	KeySource        string        `json:"key_source,omitempty"`
-	DefaultScope     string        `json:"default_scope,omitempty"`
-	AllowedScopes    []string      `json:"allowed_scopes,omitempty"`
+	AuthMethod       string   `json:"auth_method,omitempty"`
+	ClientID         string   `json:"client_id"`
+	ClientSecret     string   `json:"client_secret,omitempty"`
+	AdminUsername    string   `json:"admin_username,omitempty"`
+	AdminPassword    string   `json:"admin_password,omitempty"`
+	PrivateKey       string   `json:"private_key,omitempty"`
+	PrivateKeyID     string   `json:"private_key_id,omitempty"`
+	SigningAlgorithm string   `json:"signing_algorithm,omitempty"`
+	URL              string   `json:"url"`
+	TokenURL         string   `json:"token_url"`
+	InsecureTLS      bool     `json:"insecure_tls,omitempty"`
+	KeySource        string   `json:"key_source,omitempty"`
+	DefaultScope     string   `json:"default_scope,omitempty"`
+	AllowedScopes    []string `json:"allowed_scopes,omitempty"`
 }
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
@@ -97,14 +94,6 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 			"insecure_tls": {
 				Type:        framework.TypeBool,
 				Description: "If true, skip TLS certificate verification when connecting to PingFederate. Not recommended for production.",
-			},
-			"default_ttl": {
-				Type:        framework.TypeDurationSecond,
-				Description: "Default TTL for generated credentials. If not set, uses Vault's system default.",
-			},
-			"max_ttl": {
-				Type:        framework.TypeDurationSecond,
-				Description: "Maximum TTL for generated credentials. If not set, uses Vault's system max.",
 			},
 			"default_scope": {
 				Type:        framework.TypeString,
@@ -191,12 +180,6 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	if cfg.AdminUsername != "" {
 		data["admin_username"] = cfg.AdminUsername
 	}
-	if cfg.DefaultTTL > 0 {
-		data["default_ttl"] = int64(cfg.DefaultTTL.Seconds())
-	}
-	if cfg.MaxTTL > 0 {
-		data["max_ttl"] = int64(cfg.MaxTTL.Seconds())
-	}
 	if cfg.DefaultScope != "" {
 		data["default_scope"] = cfg.DefaultScope
 	}
@@ -250,16 +233,6 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	}
 	if v, ok := d.GetOk("insecure_tls"); ok {
 		cfg.InsecureTLS, _ = v.(bool)
-	}
-	if v, ok := d.GetOk("default_ttl"); ok {
-		if seconds, ok := v.(int); ok {
-			cfg.DefaultTTL = time.Duration(int64(seconds) * int64(time.Second))
-		}
-	}
-	if v, ok := d.GetOk("max_ttl"); ok {
-		if seconds, ok := v.(int); ok {
-			cfg.MaxTTL = time.Duration(int64(seconds) * int64(time.Second))
-		}
 	}
 	if v, ok := d.GetOk("default_scope"); ok {
 		cfg.DefaultScope, _ = v.(string)
