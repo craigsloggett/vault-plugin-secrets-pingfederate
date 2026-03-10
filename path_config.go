@@ -103,6 +103,11 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 				Type:        framework.TypeCommaStringSlice,
 				Description: "Comma-separated list of permitted OAuth 2.0 scopes. If set, per-request scope values are validated against this list. If not set, any scope is allowed.",
 			},
+			"verify_connection": {
+				Type:        framework.TypeBool,
+				Default:     true,
+				Description: "If true, verify connectivity to PingFederate before accepting the configuration.",
+			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.ReadOperation: &framework.PathOperation{
@@ -313,6 +318,12 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 		return logical.ErrorResponse("auth_method must be \"client_secret\" or \"private_key_jwt\""), nil
 	}
 
+	if verifyConnection, ok := d.Get("verify_connection").(bool); ok && verifyConnection {
+		if err := verifyPingFederateConnection(ctx, cfg); err != nil {
+			return logical.ErrorResponse("failed to verify connection to PingFederate: %s", err), nil
+		}
+	}
+
 	entry, err := logical.StorageEntryJSON("config", cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage entry: %w", err)
@@ -333,6 +344,23 @@ func configDeleteOperation(ctx context.Context, req *logical.Request, _ *framewo
 	}
 
 	return nil, nil
+}
+
+// verifyPingFederateConnection attempts a client_credentials token request
+// to validate that the configured credentials and token URL are correct.
+func verifyPingFederateConnection(ctx context.Context, cfg *pingFederateConfig) error {
+	httpClient := newHTTPClient(cfg.InsecureTLS)
+
+	switch cfg.AuthMethod {
+	case "", "client_secret":
+		_, err := getAccessToken(ctx, httpClient, cfg.TokenURL, cfg.ClientID, cfg.ClientSecret)
+		return err
+	case "private_key_jwt":
+		_, _, err := getBrokeredToken(ctx, httpClient, cfg, "", "", nil)
+		return err
+	default:
+		return fmt.Errorf("unsupported auth_method: %s", cfg.AuthMethod)
+	}
 }
 
 func getConfig(ctx context.Context, s logical.Storage) (*pingFederateConfig, error) {

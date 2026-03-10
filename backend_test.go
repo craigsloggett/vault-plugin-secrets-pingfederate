@@ -70,10 +70,11 @@ func writeTestConfig(t *testing.T, b logical.Backend, storage logical.Storage) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     "https://pingfederate.example.com:9031/as/token.oauth2",
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -167,10 +168,11 @@ func TestConfigWriteAndRead(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "my-client-id",
-			"client_secret": "my-client-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     "https://pingfederate.example.com:9031/as/token.oauth2",
+			"client_id":         "my-client-id",
+			"client_secret":     "my-client-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -215,10 +217,11 @@ func TestConfigUpdate(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "my-client-id",
-			"client_secret": "my-client-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     "https://pingfederate.example.com:9031/as/token.oauth2",
+			"client_id":         "my-client-id",
+			"client_secret":     "my-client-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -231,7 +234,8 @@ func TestConfigUpdate(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"url": "https://pingfederate-new.example.com:9999",
+			"url":               "https://pingfederate-new.example.com:9999",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -708,6 +712,7 @@ func writeTestJWTConfig(t *testing.T, b logical.Backend, storage logical.Storage
 			"signing_algorithm": "RS256",
 			"url":               "https://pingfederate.example.com:9999",
 			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -731,12 +736,13 @@ func TestConfigWriteJWTDefaultAlgorithm(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method":    "private_key_jwt",
-			"client_id":      "jwt-admin-client",
-			"private_key":    testRSAPrivateKeyPEM(t),
-			"private_key_id": "key-1",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"private_key_id":    "key-1",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -764,10 +770,11 @@ func TestConfigWriteJWTAutoGenerateKey(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "jwt-admin-client",
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -808,11 +815,12 @@ func TestConfigWriteJWTAutoGenerateKeyID(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "jwt-admin-client",
-			"private_key": testRSAPrivateKeyPEM(t),
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-admin-client",
+			"private_key":       testRSAPrivateKeyPEM(t),
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -947,6 +955,7 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 			"private_key":       testRSAPrivateKeyPEM(t),
 			"private_key_id":    "key-1",
 			"signing_algorithm": "RS256",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -974,8 +983,9 @@ func TestConfigSwitchAuthMethodClearsStaleFields(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method":   "client_secret",
-			"client_secret": "new-secret",
+			"auth_method":       "client_secret",
+			"client_secret":     "new-secret",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1447,6 +1457,7 @@ func TestJWKSPrivateKeyJWTEC(t *testing.T) {
 			"signing_algorithm": "ES256",
 			"url":               "https://pingfederate.example.com:9999",
 			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1602,10 +1613,11 @@ func TestTokenReadBasicAuth(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     server.URL,
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1678,6 +1690,7 @@ func TestTokenReadJWTAuth(t *testing.T) {
 			"signing_algorithm": "RS256",
 			"url":               "https://pingfederate.example.com:9999",
 			"token_url":         server.URL,
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1722,10 +1735,11 @@ func TestTokenWriteWithScope(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     server.URL,
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1782,10 +1796,11 @@ func TestTokenReadReservedMetadataKeysWarning(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     server.URL,
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1838,6 +1853,7 @@ func TestConfigWriteAutoGenerateEC(t *testing.T) {
 			"signing_algorithm": "ES256",
 			"url":               "https://pingfederate.example.com:9999",
 			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1875,10 +1891,11 @@ func TestConfigReadKeySource(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "auto-client",
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "auto-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1914,10 +1931,11 @@ func TestJWKSAfterAutoGenerate(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "jwks-client",
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwks-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -1958,10 +1976,11 @@ func TestRotateRootPrivateKeyJWTKeyChanges(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "rotate-client",
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "rotate-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2022,6 +2041,7 @@ func TestRotateRootPrivateKeyJWTEC(t *testing.T) {
 			"signing_algorithm": "ES256",
 			"url":               "https://pingfederate.example.com:9999",
 			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2084,10 +2104,11 @@ func TestConfigUpdateRetainsKeySource(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "original-client",
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "original-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2113,7 +2134,8 @@ func TestConfigUpdateRetainsKeySource(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id": "updated-client",
+			"client_id":         "updated-client",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2148,10 +2170,11 @@ func TestConfigUpdateRejectsAlgorithmMismatch(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"auth_method": "private_key_jwt",
-			"client_id":   "mismatch-client",
-			"url":         "https://pingfederate.example.com:9999",
-			"token_url":   "https://pingfederate.example.com:9031/as/token.oauth2",
+			"auth_method":       "private_key_jwt",
+			"client_id":         "mismatch-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2213,12 +2236,13 @@ func TestConfigWriteDefaultScopeWithinAllowedScopes(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":      "scope-client",
-			"client_secret":  "scope-secret",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      "https://pingfederate.example.com:9031/as/token.oauth2",
-			"default_scope":  "openid email",
-			"allowed_scopes": "openid,email,profile",
+			"client_id":         "scope-client",
+			"client_secret":     "scope-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"default_scope":     "openid email",
+			"allowed_scopes":    "openid,email,profile",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2267,11 +2291,12 @@ func TestTokenReadDefaultScope(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     server.URL,
-			"default_scope": "openid",
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"default_scope":     "openid",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2317,11 +2342,12 @@ func TestTokenReadScopeOverridesDefault(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     server.URL,
-			"default_scope": "openid",
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"default_scope":     "openid",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2360,11 +2386,12 @@ func TestTokenReadScopeNotInAllowedScopes(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":      "admin-client",
-			"client_secret":  "admin-secret",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      server.URL,
-			"allowed_scopes": "openid,email",
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"allowed_scopes":    "openid,email",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2413,11 +2440,12 @@ func TestTokenReadScopeInAllowedScopes(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":      "admin-client",
-			"client_secret":  "admin-secret",
-			"url":            "https://pingfederate.example.com:9999",
-			"token_url":      server.URL,
-			"allowed_scopes": "openid,email,profile",
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"allowed_scopes":    "openid,email,profile",
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2463,10 +2491,11 @@ func TestTokenReadNoScopeNoDefaultNoAllowed(t *testing.T) {
 		Path:      "config",
 		Storage:   storage,
 		Data: map[string]any{
-			"client_id":     "admin-client",
-			"client_secret": "admin-secret",
-			"url":           "https://pingfederate.example.com:9999",
-			"token_url":     server.URL,
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         server.URL,
+			"verify_connection": false,
 		},
 	})
 	if err != nil {
@@ -2488,5 +2517,158 @@ func TestTokenReadNoScopeNoDefaultNoAllowed(t *testing.T) {
 	}
 	if resp == nil || resp.IsError() {
 		t.Fatalf("unexpected error response: %v", resp)
+	}
+}
+
+// --- Verify Connection Tests ---
+
+func TestVerifyConnection(t *testing.T) {
+	tests := []struct {
+		name          string
+		serverHandler http.HandlerFunc
+		configData    map[string]any
+		expectError   bool
+		expectPersist bool
+	}{
+		{
+			name: "client_secret success",
+			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(AccessTokenResponse{
+					AccessToken: "verify-token",
+					TokenType:   "Bearer",
+					ExpiresIn:   3600,
+				})
+			}),
+			configData: map[string]any{
+				"client_id":     "test-client",
+				"client_secret": "test-secret",
+				"url":           "https://pingfederate.example.com:9999",
+			},
+			expectError:   false,
+			expectPersist: true,
+		},
+		{
+			name: "client_secret failure",
+			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+			}),
+			configData: map[string]any{
+				"client_id":     "bad-client",
+				"client_secret": "bad-secret",
+				"url":           "https://pingfederate.example.com:9999",
+			},
+			expectError:   true,
+			expectPersist: false,
+		},
+		{
+			name: "verify_connection false skips check",
+			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+			}),
+			configData: map[string]any{
+				"client_id":         "bad-client",
+				"client_secret":     "bad-secret",
+				"url":               "https://pingfederate.example.com:9999",
+				"verify_connection": false,
+			},
+			expectError:   false,
+			expectPersist: true,
+		},
+		{
+			name: "private_key_jwt success",
+			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(AccessTokenResponse{
+					AccessToken: "jwt-verify-token",
+					TokenType:   "Bearer",
+					ExpiresIn:   3600,
+				})
+			}),
+			configData: map[string]any{
+				"auth_method":       "private_key_jwt",
+				"client_id":         "jwt-client",
+				"private_key_id":    "key-1",
+				"signing_algorithm": "RS256",
+				"url":               "https://pingfederate.example.com:9999",
+			},
+			expectError:   false,
+			expectPersist: true,
+		},
+		{
+			name: "private_key_jwt failure",
+			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+			}),
+			configData: map[string]any{
+				"auth_method":       "private_key_jwt",
+				"client_id":         "jwt-client",
+				"private_key_id":    "key-1",
+				"signing_algorithm": "RS256",
+				"url":               "https://pingfederate.example.com:9999",
+			},
+			expectError:   true,
+			expectPersist: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, storage := newTestBackend(t)
+
+			server := httptest.NewServer(tt.serverHandler)
+			defer server.Close()
+
+			data := make(map[string]any)
+			for k, v := range tt.configData {
+				data[k] = v
+			}
+			data["token_url"] = server.URL
+
+			// For private_key_jwt tests, generate a key if not provided.
+			if data["auth_method"] == "private_key_jwt" {
+				if _, ok := data["private_key"]; !ok {
+					data["private_key"] = testRSAPrivateKeyPEM(t)
+				}
+			}
+
+			resp, err := b.HandleRequest(context.Background(), &logical.Request{
+				Operation: logical.CreateOperation,
+				Path:      "config",
+				Storage:   storage,
+				Data:      data,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.expectError {
+				if resp == nil || !resp.IsError() {
+					t.Fatal("expected error response for failed verification")
+				}
+				if !strings.Contains(resp.Error().Error(), "failed to verify connection to PingFederate") {
+					t.Fatalf("expected verify connection error, got: %s", resp.Error())
+				}
+			} else {
+				if resp != nil && resp.IsError() {
+					t.Fatalf("unexpected error response: %v", resp.Error())
+				}
+			}
+
+			// Check whether config was persisted.
+			cfg, err := getConfig(context.Background(), storage)
+			if err != nil {
+				t.Fatalf("unexpected error reading config: %v", err)
+			}
+			if tt.expectPersist && cfg == nil {
+				t.Fatal("expected config to be persisted, but it was not")
+			}
+			if !tt.expectPersist && cfg != nil {
+				t.Fatal("expected config NOT to be persisted, but it was")
+			}
+		})
 	}
 }
