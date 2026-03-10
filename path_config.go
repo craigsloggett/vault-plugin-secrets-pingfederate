@@ -367,7 +367,7 @@ func verifyPingFederateConnection(ctx context.Context, cfg *pingFederateConfig) 
 		_, err := getAccessToken(ctx, httpClient, cfg.TokenURL, cfg.ClientID, cfg.ClientSecret)
 		return err
 	case "private_key_jwt":
-		_, _, err := getBrokeredToken(ctx, httpClient, cfg, "", "", nil)
+		_, _, err := getBrokeredToken(ctx, httpClient, cfg, "", "", nil, nil)
 		return err
 	default:
 		return fmt.Errorf("unsupported auth_method: %s", cfg.AuthMethod)
