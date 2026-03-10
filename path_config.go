@@ -12,20 +12,21 @@ import (
 )
 
 type pingFederateConfig struct {
-	AuthMethod       string   `json:"auth_method,omitempty"`
-	ClientID         string   `json:"client_id"`
-	ClientSecret     string   `json:"client_secret,omitempty"`
-	AdminUsername    string   `json:"admin_username,omitempty"`
-	AdminPassword    string   `json:"admin_password,omitempty"`
-	PrivateKey       string   `json:"private_key,omitempty"`
-	PrivateKeyID     string   `json:"private_key_id,omitempty"`
-	SigningAlgorithm string   `json:"signing_algorithm,omitempty"`
-	URL              string   `json:"url"`
-	TokenURL         string   `json:"token_url"`
-	InsecureTLS      bool     `json:"insecure_tls,omitempty"`
-	KeySource        string   `json:"key_source,omitempty"`
-	DefaultScope     string   `json:"default_scope,omitempty"`
-	AllowedScopes    []string `json:"allowed_scopes,omitempty"`
+	AuthMethod          string   `json:"auth_method,omitempty"`
+	ClientID            string   `json:"client_id"`
+	ClientSecret        string   `json:"client_secret,omitempty"`
+	AdminUsername       string   `json:"admin_username,omitempty"`
+	AdminPassword       string   `json:"admin_password,omitempty"`
+	PrivateKey          string   `json:"private_key,omitempty"`
+	PrivateKeyID        string   `json:"private_key_id,omitempty"`
+	SigningAlgorithm    string   `json:"signing_algorithm,omitempty"`
+	URL                 string   `json:"url"`
+	TokenURL            string   `json:"token_url"`
+	InsecureTLS         bool     `json:"insecure_tls,omitempty"`
+	KeySource           string   `json:"key_source,omitempty"`
+	DefaultScope        string   `json:"default_scope,omitempty"`
+	AllowedScopes       []string `json:"allowed_scopes,omitempty"`
+	AllowedMetadataKeys []string `json:"allowed_metadata_keys,omitempty"`
 }
 
 func pathConfig(_ *pingFederateBackend) *framework.Path {
@@ -107,6 +108,10 @@ func pathConfig(_ *pingFederateBackend) *framework.Path {
 				Type:        framework.TypeBool,
 				Default:     true,
 				Description: "If true, verify connectivity to PingFederate before accepting the configuration.",
+			},
+			"allowed_metadata_keys": {
+				Type:        framework.TypeCommaStringSlice,
+				Description: "Comma-separated list of entity metadata keys to include as claims in token requests. If not set, all metadata keys are included (except reserved OAuth parameters).",
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -191,6 +196,9 @@ func configReadOperation(ctx context.Context, req *logical.Request, _ *framework
 	if len(cfg.AllowedScopes) > 0 {
 		data["allowed_scopes"] = cfg.AllowedScopes
 	}
+	if len(cfg.AllowedMetadataKeys) > 0 {
+		data["allowed_metadata_keys"] = cfg.AllowedMetadataKeys
+	}
 
 	return &logical.Response{
 		Data: data,
@@ -244,6 +252,9 @@ func configWriteOperation(ctx context.Context, req *logical.Request, d *framewor
 	}
 	if v, ok := d.GetOk("allowed_scopes"); ok {
 		cfg.AllowedScopes, _ = v.([]string)
+	}
+	if v, ok := d.GetOk("allowed_metadata_keys"); ok {
+		cfg.AllowedMetadataKeys, _ = v.([]string)
 	}
 
 	if len(cfg.AllowedScopes) > 0 && cfg.DefaultScope != "" {
@@ -356,7 +367,7 @@ func verifyPingFederateConnection(ctx context.Context, cfg *pingFederateConfig) 
 		_, err := getAccessToken(ctx, httpClient, cfg.TokenURL, cfg.ClientID, cfg.ClientSecret)
 		return err
 	case "private_key_jwt":
-		_, _, err := getBrokeredToken(ctx, httpClient, cfg, "", "", nil)
+		_, _, err := getBrokeredToken(ctx, httpClient, cfg, "", "", nil, nil)
 		return err
 	default:
 		return fmt.Errorf("unsupported auth_method: %s", cfg.AuthMethod)

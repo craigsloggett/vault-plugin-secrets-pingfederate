@@ -88,7 +88,7 @@ func (b *pingFederateBackend) tokenReadOperation(ctx context.Context, req *logic
 		}
 	}
 
-	tokenResp, skippedKeys, err := getBrokeredToken(ctx, client.HTTPClient(), cfg, scope, req.EntityID, metadata)
+	tokenResp, skippedKeys, err := getBrokeredToken(ctx, client.HTTPClient(), cfg, scope, req.EntityID, metadata, cfg.AllowedMetadataKeys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain brokered token: %w", err)
 	}

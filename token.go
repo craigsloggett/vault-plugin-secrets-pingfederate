@@ -25,7 +25,7 @@ var reservedTokenParams = map[string]bool{
 // getBrokeredToken authenticates to PingFederate's token endpoint as the
 // foothold client, enriching the request with Vault identity context.
 // This is a standard OAuth 2.0 client_credentials request — not an admin API call.
-func getBrokeredToken(ctx context.Context, httpClient *http.Client, cfg *pingFederateConfig, scope string, entityID string, metadata map[string]string) (*AccessTokenResponse, []string, error) {
+func getBrokeredToken(ctx context.Context, httpClient *http.Client, cfg *pingFederateConfig, scope string, entityID string, metadata map[string]string, allowedMetadataKeys []string) (*AccessTokenResponse, []string, error) {
 	data := url.Values{
 		"grant_type":      {"client_credentials"},
 		"vault_entity_id": {entityID},
@@ -35,8 +35,20 @@ func getBrokeredToken(ctx context.Context, httpClient *http.Client, cfg *pingFed
 		data.Set("scope", scope)
 	}
 
+	// Build an allowlist set when configured.
+	var allowedSet map[string]bool
+	if len(allowedMetadataKeys) > 0 {
+		allowedSet = make(map[string]bool, len(allowedMetadataKeys))
+		for _, k := range allowedMetadataKeys {
+			allowedSet[k] = true
+		}
+	}
+
 	var skippedKeys []string
 	for k, v := range metadata {
+		if allowedSet != nil && !allowedSet[k] {
+			continue
+		}
 		if reservedTokenParams[strings.ToLower(k)] {
 			skippedKeys = append(skippedKeys, k)
 			continue
