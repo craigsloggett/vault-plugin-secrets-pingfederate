@@ -685,6 +685,8 @@ func TestStaticRoleReadConfigEmpty(t *testing.T) {
 func TestStaticRoleReadConfigReturnsConfig(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	b.clients["test"] = &mockPingFederateClient{}
+
 	writeTestConfig(t, b, storage)
 
 	// Write a role.
@@ -747,6 +749,8 @@ func TestStaticCredsReadEmpty(t *testing.T) {
 
 func TestStaticRoleWriteAndList(t *testing.T) {
 	b, storage := newTestBackend(t)
+
+	b.clients["test"] = &mockPingFederateClient{}
 
 	writeTestConfig(t, b, storage)
 
@@ -831,6 +835,8 @@ func TestStaticRoleWriteMissingConnectionName(t *testing.T) {
 func TestStaticRoleDelete(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	b.clients["test"] = &mockPingFederateClient{}
+
 	writeTestConfig(t, b, storage)
 
 	// Create a role.
@@ -846,6 +852,15 @@ func TestStaticRoleDelete(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify secret was created.
+	secret, err := getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret == nil {
+		t.Fatal("expected secret to exist after role creation")
 	}
 
 	// Delete it.
@@ -874,6 +889,15 @@ func TestStaticRoleDelete(t *testing.T) {
 		if keys, ok := resp.Data["keys"].([]string); ok && len(keys) > 0 {
 			t.Fatalf("expected empty list after delete, got %v", keys)
 		}
+	}
+
+	// Verify secret was also deleted.
+	secret, err = getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret != nil {
+		t.Fatal("expected secret to be deleted after role deletion")
 	}
 }
 
@@ -928,7 +952,7 @@ func TestStaticCredsReadGeneratesToken(t *testing.T) {
 func TestStaticCredsReadWithoutConfig(t *testing.T) {
 	b, storage := newTestBackend(t)
 
-	// Write a role without configuring the backend.
+	// Write a role directly to storage (no secret entry, simulating pre-migration).
 	entry, err := logical.StorageEntryJSON("static-roles/terraform", &staticRoleEntry{
 		Name:           "terraform",
 		ClientID:       "terraform-client",
@@ -941,14 +965,24 @@ func TestStaticCredsReadWithoutConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Read creds should fail because backend is not configured.
-	_, err = b.HandleRequest(context.Background(), &logical.Request{
+	// Read creds should return error about missing managed secret.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.ReadOperation,
 		Path:      "static-creds/terraform",
 		Storage:   storage,
 	})
-	if err == nil {
-		t.Fatal("expected error when reading creds without backend config")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing managed secret")
+	}
+	errMsg, ok := resp.Data["error"].(string)
+	if !ok {
+		t.Fatal("expected error to be a string")
+	}
+	if !strings.Contains(errMsg, "no managed secret") {
+		t.Fatalf("expected 'no managed secret' error, got %v", resp.Data["error"])
 	}
 }
 
@@ -956,8 +990,8 @@ func TestStaticCredsReadClientError(t *testing.T) {
 	b, storage := newTestBackend(t)
 
 	b.clients["test"] = &mockPingFederateClient{
-		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
-			return "", fmt.Errorf("PingFederate unavailable")
+		getAccessTokenFunc: func(_ context.Context, _, _ string) (*AccessTokenResponse, error) {
+			return nil, fmt.Errorf("PingFederate unavailable")
 		},
 	}
 
@@ -1564,6 +1598,8 @@ func TestStaticCredsReadGeneratesTokenJWT(t *testing.T) {
 func TestStaticRoleWriteWithRotationPeriod(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	b.clients["test"] = &mockPingFederateClient{}
+
 	writeTestConfig(t, b, storage)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
@@ -1675,6 +1711,18 @@ func TestPeriodicFuncRotatesWhenDue(t *testing.T) {
 	if time.Since(updatedRole.LastRotated) > 5*time.Second {
 		t.Fatalf("expected last_rotated to be recent, got %v", updatedRole.LastRotated)
 	}
+
+	// Verify secret was persisted.
+	secret, err := getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret == nil {
+		t.Fatal("expected secret to be persisted after rotation")
+	}
+	if secret.ClientSecret != "new-secret" {
+		t.Fatalf("expected 'new-secret', got %q", secret.ClientSecret)
+	}
 }
 
 func TestPeriodicFuncSkipsWhenNotDue(t *testing.T) {
@@ -1729,7 +1777,7 @@ func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
 
 	writeTestConfig(t, b, storage)
 
-	// Write a role without rotation_period.
+	// Write a role without rotation_period (initial rotation will fire).
 	_, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      "static-roles/terraform",
@@ -1744,6 +1792,9 @@ func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Reset flag after initial rotation during role creation.
+	rotated = false
+
 	err = b.periodicFunc(context.Background(), &logical.Request{Storage: storage})
 	if err != nil {
 		t.Fatalf("periodicFunc returned error: %v", err)
@@ -1751,6 +1802,267 @@ func TestPeriodicFuncSkipsWithoutRotationPeriod(t *testing.T) {
 
 	if rotated {
 		t.Fatal("expected no rotation for role without rotation_period")
+	}
+}
+
+func TestStaticCredsReadDoesNotRotate(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	rotationCount := 0
+	b.clients["test"] = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			rotationCount++
+			return "initial-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	// Create role (triggers initial rotation).
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rotationCount != 1 {
+		t.Fatalf("expected 1 rotation during creation, got %d", rotationCount)
+	}
+
+	// Read creds — should NOT trigger another rotation.
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-creds/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if rotationCount != 1 {
+		t.Fatalf("expected UpdateClientSecret called exactly once (during creation), got %d", rotationCount)
+	}
+}
+
+func TestStaticCredsReadUsesStoredSecret(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	var capturedSecret string
+	b.clients["test"] = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			return "rotated-secret-value", nil
+		},
+		getAccessTokenFunc: func(_ context.Context, _, clientSecret string) (*AccessTokenResponse, error) {
+			capturedSecret = clientSecret
+			return &AccessTokenResponse{
+				AccessToken: "mock-access-token",
+				TokenType:   "Bearer",
+				ExpiresIn:   3600,
+			}, nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-creds/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedSecret != "rotated-secret-value" {
+		t.Fatalf("expected GetAccessToken to receive 'rotated-secret-value', got %q", capturedSecret)
+	}
+}
+
+func TestStaticRoleWritePerformsInitialRotation(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	b.clients["test"] = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			return "initial-rotation-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	secret, err := getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret == nil {
+		t.Fatal("expected secret to exist after role creation")
+	}
+	if secret.ClientSecret != "initial-rotation-secret" {
+		t.Fatalf("expected 'initial-rotation-secret', got %q", secret.ClientSecret)
+	}
+}
+
+func TestStaticRoleDeleteCleansUpSecret(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	b.clients["test"] = &mockPingFederateClient{}
+
+	writeTestConfig(t, b, storage)
+
+	_, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+		Data: map[string]any{
+			"name":            "terraform",
+			"client_id":       "terraform-client",
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify secret exists.
+	secret, err := getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret == nil {
+		t.Fatal("expected secret to exist")
+	}
+
+	// Delete the role.
+	_, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "static-roles/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify secret is gone.
+	secret, err = getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret != nil {
+		t.Fatal("expected secret to be deleted")
+	}
+}
+
+func TestStaticCredsReadNoStoredSecret(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write role directly to storage (simulating pre-migration role, no secret entry).
+	entry, err := logical.StorageEntryJSON("static-roles/terraform", &staticRoleEntry{
+		Name:           "terraform",
+		ClientID:       "terraform-client",
+		ConnectionName: "test",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := storage.Put(context.Background(), entry); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-creds/terraform",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for missing stored secret")
+	}
+	errMsg, ok := resp.Data["error"].(string)
+	if !ok {
+		t.Fatal("expected error to be a string")
+	}
+	if !strings.Contains(errMsg, "no managed secret") {
+		t.Fatalf("expected 'no managed secret' error, got %v", resp.Data["error"])
+	}
+}
+
+func TestPeriodicFuncPersistsRotatedSecret(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	b.clients["test"] = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			return "periodic-rotated-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	// Write a role with rotation_period and last_rotated far in the past.
+	role := &staticRoleEntry{
+		Name:           "terraform",
+		ClientID:       "terraform-client",
+		ConnectionName: "test",
+		RotationPeriod: 60 * time.Second,
+		LastRotated:    time.Now().Add(-2 * time.Hour),
+	}
+	entry, err := logical.StorageEntryJSON("static-roles/terraform", role)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := storage.Put(context.Background(), entry); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	err = b.periodicFunc(context.Background(), &logical.Request{Storage: storage})
+	if err != nil {
+		t.Fatalf("periodicFunc returned error: %v", err)
+	}
+
+	secret, err := getStaticRoleSecret(context.Background(), storage, "terraform")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if secret == nil {
+		t.Fatal("expected secret to be persisted after periodic rotation")
+	}
+	if secret.ClientSecret != "periodic-rotated-secret" {
+		t.Fatalf("expected 'periodic-rotated-secret', got %q", secret.ClientSecret)
 	}
 }
 

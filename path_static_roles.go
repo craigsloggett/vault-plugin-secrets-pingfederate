@@ -18,6 +18,42 @@ type staticRoleEntry struct {
 	LastRotated    time.Time     `json:"last_rotated,omitempty"`
 }
 
+type staticRoleSecretEntry struct {
+	ClientSecret string `json:"client_secret"`
+}
+
+func getStaticRoleSecret(ctx context.Context, s logical.Storage, name string) (*staticRoleSecretEntry, error) {
+	entry, err := s.Get(ctx, "static-role-secrets/"+name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read static role secret from storage: %w", err)
+	}
+	if entry == nil {
+		return nil, nil
+	}
+
+	var secret staticRoleSecretEntry
+	if err := json.Unmarshal(entry.Value, &secret); err != nil {
+		return nil, fmt.Errorf("failed to deserialize static role secret: %w", err)
+	}
+
+	return &secret, nil
+}
+
+func putStaticRoleSecret(ctx context.Context, s logical.Storage, name, clientSecret string) error {
+	entry, err := logical.StorageEntryJSON("static-role-secrets/"+name, &staticRoleSecretEntry{
+		ClientSecret: clientSecret,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create secret storage entry: %w", err)
+	}
+
+	if err := s.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write static role secret to storage: %w", err)
+	}
+
+	return nil
+}
+
 func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 	return []*framework.Path{
 		{
@@ -189,17 +225,20 @@ func (b *pingFederateBackend) staticCredsReadOperation(ctx context.Context, req 
 		return logical.ErrorResponse("static role %q is missing connection_name; update the role to set it", name), nil
 	}
 
+	storedSecret, err := getStaticRoleSecret(ctx, req.Storage, name)
+	if err != nil {
+		return nil, err
+	}
+	if storedSecret == nil {
+		return logical.ErrorResponse("no managed secret found for static role %q; update the role to perform an initial rotation", name), nil
+	}
+
 	client, err := b.getClientForConnection(ctx, req.Storage, role.ConnectionName)
 	if err != nil {
 		return nil, err
 	}
 
-	secret, err := client.UpdateClientSecret(ctx, role.ClientID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to rotate client secret for %s: %w", role.ClientID, err)
-	}
-
-	tokenResp, err := client.GetAccessToken(ctx, role.ClientID, secret)
+	tokenResp, err := client.GetAccessToken(ctx, role.ClientID, storedSecret.ClientSecret)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain access token for %s: %w", role.ClientID, err)
 	}
@@ -260,9 +299,39 @@ func (b *pingFederateBackend) staticRoleWriteOperation(ctx context.Context, req 
 		return logical.ErrorResponse("rotation_period must be at least 60 seconds"), nil
 	}
 
-	// Set last_rotated to now when rotation is first configured so the
-	// periodic function knows when the next rotation is due.
-	if role.RotationPeriod > 0 && role.LastRotated.IsZero() {
+	// Perform initial rotation when the role is new or client_id changed.
+	existingSecret, err := getStaticRoleSecret(ctx, req.Storage, name)
+	if err != nil {
+		return nil, err
+	}
+
+	needsRotation := existingSecret == nil
+	if !needsRotation {
+		// Check if client_id changed by comparing with the previously stored role.
+		existing, err := getStaticRole(ctx, req.Storage, name)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil && existing.ClientID != role.ClientID {
+			needsRotation = true
+		}
+	}
+
+	if needsRotation {
+		client, err := b.getClientForConnection(ctx, req.Storage, role.ConnectionName)
+		if err != nil {
+			return nil, err
+		}
+
+		newSecret, err := client.UpdateClientSecret(ctx, role.ClientID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to perform initial rotation for client %s: %w", role.ClientID, err)
+		}
+
+		if err := putStaticRoleSecret(ctx, req.Storage, name, newSecret); err != nil {
+			return nil, err
+		}
+
 		role.LastRotated = time.Now()
 	}
 
@@ -286,6 +355,10 @@ func (b *pingFederateBackend) staticRoleDeleteOperation(ctx context.Context, req
 
 	if err := req.Storage.Delete(ctx, "static-roles/"+name); err != nil {
 		return nil, fmt.Errorf("failed to delete role from storage: %w", err)
+	}
+
+	if err := req.Storage.Delete(ctx, "static-role-secrets/"+name); err != nil {
+		return nil, fmt.Errorf("failed to delete role secret from storage: %w", err)
 	}
 
 	return nil, nil
