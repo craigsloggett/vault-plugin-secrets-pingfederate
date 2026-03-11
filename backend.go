@@ -165,9 +165,29 @@ func (b *pingFederateBackend) rotateStaticRoleIfDue(ctx context.Context, s logic
 		return fmt.Errorf("failed to rotate secret for client %s: %w", role.ClientID, err)
 	}
 
+	walID, err := framework.PutWAL(ctx, s, walStaticRoleCredsKind, &walStaticRoleCredsEntry{
+		RoleName:  roleName,
+		ClientID:  role.ClientID,
+		NewSecret: newSecret,
+	})
+	if err != nil {
+		logger.Error("failed to persist rotated static role credentials; PingFederate has the new secret but Vault does not",
+			"role", roleName,
+			"client_id", role.ClientID,
+			"action_required", "manually update the static role secret",
+		)
+		return fmt.Errorf("failed to write WAL entry: %w", err)
+	}
+
 	if err := putStaticRoleSecret(ctx, s, roleName, newSecret); err != nil {
-		logger.Error("CRITICAL: rotated secret in PingFederate but failed to persist in Vault", "role", roleName, "error", err)
 		return err
+	}
+
+	if err := framework.DeleteWAL(ctx, s, walID); err != nil {
+		logger.Warn("failed to delete WAL entry; will be cleaned up on next rollback cycle",
+			"wal_id", walID,
+			"error", err,
+		)
 	}
 
 	role.LastRotated = time.Now()
