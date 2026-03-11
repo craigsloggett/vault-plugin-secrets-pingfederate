@@ -22,6 +22,14 @@ type staticRoleSecretEntry struct {
 	ClientSecret string `json:"client_secret"`
 }
 
+const walStaticRoleCredsKind = "staticRoleCreds"
+
+type walStaticRoleCredsEntry struct {
+	RoleName  string `json:"role_name"`
+	ClientID  string `json:"client_id"`
+	NewSecret string `json:"new_secret"`
+}
+
 func getStaticRoleSecret(ctx context.Context, s logical.Storage, name string) (*staticRoleSecretEntry, error) {
 	entry, err := s.Get(ctx, "static-role-secrets/"+name)
 	if err != nil {
@@ -328,8 +336,29 @@ func (b *pingFederateBackend) staticRoleWriteOperation(ctx context.Context, req 
 			return nil, fmt.Errorf("failed to perform initial rotation for client %s: %w", role.ClientID, err)
 		}
 
+		walID, err := framework.PutWAL(ctx, req.Storage, walStaticRoleCredsKind, &walStaticRoleCredsEntry{
+			RoleName:  name,
+			ClientID:  role.ClientID,
+			NewSecret: newSecret,
+		})
+		if err != nil {
+			b.Logger().Error("failed to persist rotated static role credentials; PingFederate has the new secret but Vault does not",
+				"role", name,
+				"client_id", role.ClientID,
+				"action_required", "manually update the static role secret",
+			)
+			return nil, fmt.Errorf("failed to write WAL entry: %w", err)
+		}
+
 		if err := putStaticRoleSecret(ctx, req.Storage, name, newSecret); err != nil {
 			return nil, err
+		}
+
+		if err := framework.DeleteWAL(ctx, req.Storage, walID); err != nil {
+			b.Logger().Warn("failed to delete WAL entry; will be cleaned up on next rollback cycle",
+				"wal_id", walID,
+				"error", err,
+			)
 		}
 
 		role.LastRotated = time.Now()

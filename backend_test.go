@@ -3749,3 +3749,82 @@ func TestPathOperations_HAForwardingFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticRoleWALRollbackRecoversSecret(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	walData := map[string]any{
+		"role_name":  "my-static-role",
+		"client_id":  "target-client",
+		"new_secret": "recovered-secret",
+	}
+
+	err := b.walRollback(context.Background(), &logical.Request{Storage: storage}, walStaticRoleCredsKind, walData)
+	if err != nil {
+		t.Fatalf("unexpected error during rollback: %v", err)
+	}
+
+	stored, err := getStaticRoleSecret(context.Background(), storage, "my-static-role")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("expected stored secret after rollback")
+	}
+	if stored.ClientSecret != "recovered-secret" {
+		t.Fatalf("expected recovered-secret, got %q", stored.ClientSecret)
+	}
+}
+
+func TestStaticRoleWALRollbackIdempotent(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	if err := putStaticRoleSecret(context.Background(), storage, "my-static-role", "already-persisted"); err != nil {
+		t.Fatalf("failed to write secret: %v", err)
+	}
+
+	walData := map[string]any{
+		"role_name":  "my-static-role",
+		"client_id":  "target-client",
+		"new_secret": "already-persisted",
+	}
+
+	err := b.walRollback(context.Background(), &logical.Request{Storage: storage}, walStaticRoleCredsKind, walData)
+	if err != nil {
+		t.Fatalf("unexpected error during idempotent rollback: %v", err)
+	}
+
+	stored, err := getStaticRoleSecret(context.Background(), storage, "my-static-role")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stored.ClientSecret != "already-persisted" {
+		t.Fatalf("expected already-persisted, got %q", stored.ClientSecret)
+	}
+}
+
+func TestStaticRoleWALRollbackDeletedRole(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	walData := map[string]any{
+		"role_name":  "deleted-role",
+		"client_id":  "some-client",
+		"new_secret": "orphaned-secret",
+	}
+
+	err := b.walRollback(context.Background(), &logical.Request{Storage: storage}, walStaticRoleCredsKind, walData)
+	if err != nil {
+		t.Fatalf("unexpected error during rollback for deleted role: %v", err)
+	}
+
+	stored, err := getStaticRoleSecret(context.Background(), storage, "deleted-role")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("expected stored secret after rollback even for deleted role")
+	}
+	if stored.ClientSecret != "orphaned-secret" {
+		t.Fatalf("expected orphaned-secret, got %q", stored.ClientSecret)
+	}
+}

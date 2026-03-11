@@ -149,10 +149,17 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 }
 
 func (b *pingFederateBackend) walRollback(ctx context.Context, req *logical.Request, kind string, data any) error {
-	if kind != walRotateRootKind {
+	switch kind {
+	case walRotateRootKind:
+		return b.walRollbackRotateRoot(ctx, req, data)
+	case walStaticRoleCredsKind:
+		return b.walRollbackStaticRoleCreds(ctx, req, data)
+	default:
 		return fmt.Errorf("unknown WAL kind: %q", kind)
 	}
+}
 
+func (b *pingFederateBackend) walRollbackRotateRoot(ctx context.Context, req *logical.Request, data any) error {
 	raw, ok := data.(map[string]any)
 	if !ok {
 		return fmt.Errorf("WAL data is not a map: %T", data)
@@ -189,6 +196,36 @@ func (b *pingFederateBackend) walRollback(ctx context.Context, req *logical.Requ
 
 	b.resetConnection(connName)
 	b.Logger().Info("WAL rollback recovered rotated root credentials", "connection", connName)
+
+	return nil
+}
+
+func (b *pingFederateBackend) walRollbackStaticRoleCreds(ctx context.Context, req *logical.Request, data any) error {
+	raw, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("WAL data is not a map: %T", data)
+	}
+
+	roleName, _ := raw["role_name"].(string)
+	newSecret, _ := raw["new_secret"].(string)
+	if roleName == "" || newSecret == "" {
+		return fmt.Errorf("WAL entry missing required fields")
+	}
+
+	stored, err := getStaticRoleSecret(ctx, req.Storage, roleName)
+	if err != nil {
+		return err
+	}
+
+	if stored != nil && stored.ClientSecret == newSecret {
+		return nil
+	}
+
+	if err := putStaticRoleSecret(ctx, req.Storage, roleName, newSecret); err != nil {
+		return fmt.Errorf("failed to write static role secret during WAL rollback: %w", err)
+	}
+
+	b.Logger().Info("WAL rollback recovered rotated static role credentials", "role", roleName)
 
 	return nil
 }
