@@ -10,6 +10,13 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
+const walRotateRootKind = "rotateRootCreds"
+
+type walRotateRootEntry struct {
+	ConnectionName string `json:"connection_name"`
+	NewSecret      string `json:"new_secret"`
+}
+
 func pathRotateRoot(b *pingFederateBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "rotate-root/" + framework.GenericNameRegex("name"),
@@ -107,17 +114,31 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 		return nil, fmt.Errorf("failed to rotate root credentials in PingFederate: %w", err)
 	}
 
+	walID, err := framework.PutWAL(ctx, req.Storage, walRotateRootKind, &walRotateRootEntry{
+		ConnectionName: name,
+		NewSecret:      newSecret,
+	})
+	if err != nil {
+		b.logRootRotationFailure(cfg.ClientID)
+		return nil, fmt.Errorf("failed to write WAL entry: %w", err)
+	}
+
 	cfg.ClientSecret = newSecret
 
 	entry, err := logical.StorageEntryJSON("config/"+name, cfg)
 	if err != nil {
-		b.logRootRotationFailure(cfg.ClientID)
 		return nil, fmt.Errorf("failed to create storage entry: %w", err)
 	}
 
 	if err := req.Storage.Put(ctx, entry); err != nil {
-		b.logRootRotationFailure(cfg.ClientID)
 		return nil, fmt.Errorf("failed to write updated config to storage: %w", err)
+	}
+
+	if err := framework.DeleteWAL(ctx, req.Storage, walID); err != nil {
+		b.Logger().Warn("failed to delete WAL entry; will be cleaned up on next rollback cycle",
+			"wal_id", walID,
+			"error", err,
+		)
 	}
 
 	b.resetConnection(name)
@@ -127,10 +148,54 @@ func (b *pingFederateBackend) rotateRootOperation(ctx context.Context, req *logi
 	return resp, nil
 }
 
+func (b *pingFederateBackend) walRollback(ctx context.Context, req *logical.Request, kind string, data any) error {
+	if kind != walRotateRootKind {
+		return fmt.Errorf("unknown WAL kind: %q", kind)
+	}
+
+	raw, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("WAL data is not a map: %T", data)
+	}
+
+	connName, _ := raw["connection_name"].(string)
+	newSecret, _ := raw["new_secret"].(string)
+	if connName == "" || newSecret == "" {
+		return fmt.Errorf("WAL entry missing required fields")
+	}
+
+	cfg, err := getConfig(ctx, req.Storage, connName)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return nil
+	}
+
+	if cfg.ClientSecret == newSecret {
+		return nil
+	}
+
+	cfg.ClientSecret = newSecret
+
+	entry, err := logical.StorageEntryJSON("config/"+connName, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create storage entry during WAL rollback: %w", err)
+	}
+
+	if err := req.Storage.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write config during WAL rollback: %w", err)
+	}
+
+	b.resetConnection(connName)
+	b.Logger().Info("WAL rollback recovered rotated root credentials", "connection", connName)
+
+	return nil
+}
+
 // logRootRotationFailure logs an error when the rotated secret was accepted by
-// PingFederate but could not be persisted to Vault storage. Although the plugin
-// sends a specific secret via PUT, automatic rollback is not currently
-// implemented — the old secret is discarded before the storage write attempt.
+// PingFederate but the WAL entry could not be written. This is a narrow window
+// between PingFederate accepting the secret and the WAL being persisted.
 func (b *pingFederateBackend) logRootRotationFailure(clientID string) {
 	b.Logger().Error("failed to persist rotated root credentials; PingFederate has the new secret but Vault does not",
 		"client_id", clientID,
