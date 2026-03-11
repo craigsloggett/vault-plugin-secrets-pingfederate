@@ -47,6 +47,7 @@ func backend() *pingFederateBackend {
 			},
 			SealWrapStorage: []string{
 				"config/*",
+				"static-role-secrets/*",
 			},
 		},
 		Paths: framework.PathAppend(
@@ -159,9 +160,14 @@ func (b *pingFederateBackend) rotateStaticRoleIfDue(ctx context.Context, s logic
 		return fmt.Errorf("failed to get client for connection %q: %w", role.ConnectionName, err)
 	}
 
-	_, err = client.UpdateClientSecret(ctx, role.ClientID)
+	newSecret, err := client.UpdateClientSecret(ctx, role.ClientID)
 	if err != nil {
 		return fmt.Errorf("failed to rotate secret for client %s: %w", role.ClientID, err)
+	}
+
+	if err := putStaticRoleSecret(ctx, s, roleName, newSecret); err != nil {
+		logger.Error("CRITICAL: rotated secret in PingFederate but failed to persist in Vault", "role", roleName, "error", err)
+		return err
 	}
 
 	role.LastRotated = time.Now()
