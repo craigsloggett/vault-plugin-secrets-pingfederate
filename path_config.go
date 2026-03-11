@@ -347,11 +347,48 @@ func (b *pingFederateBackend) configDeleteOperation(ctx context.Context, req *lo
 		return logical.ErrorResponse("name is required"), nil
 	}
 
+	// Check for dependent roles before deleting.
+	var warnings []string
+
+	if roleNames, err := req.Storage.List(ctx, "roles/"); err == nil {
+		for _, roleName := range roleNames {
+			role, err := getRole(ctx, req.Storage, roleName)
+			if err != nil || role == nil {
+				continue
+			}
+			if role.ConnectionName == name {
+				warnings = append(warnings, fmt.Sprintf(
+					"role %q references this connection and will stop working", roleName))
+			}
+		}
+	}
+
+	if staticRoleNames, err := req.Storage.List(ctx, "static-roles/"); err == nil {
+		for _, roleName := range staticRoleNames {
+			role, err := getStaticRole(ctx, req.Storage, roleName)
+			if err != nil || role == nil {
+				continue
+			}
+			if role.ConnectionName == name {
+				warnings = append(warnings, fmt.Sprintf(
+					"static role %q references this connection and will stop working", roleName))
+			}
+		}
+	}
+
 	if err := req.Storage.Delete(ctx, "config/"+name); err != nil {
 		return nil, fmt.Errorf("failed to delete config from storage: %w", err)
 	}
 
 	b.resetConnection(name)
+
+	if len(warnings) > 0 {
+		resp := &logical.Response{}
+		for _, w := range warnings {
+			resp.AddWarning(w)
+		}
+		return resp, nil
+	}
 
 	return nil, nil
 }

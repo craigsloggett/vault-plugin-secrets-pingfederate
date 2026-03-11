@@ -3076,3 +3076,121 @@ func TestCredsReadWithoutAllowedMetadataKeysSendsAll(t *testing.T) {
 		t.Fatalf("unexpected error response: %v", resp)
 	}
 }
+
+func TestConfigDeleteWarnsAboutDependentRoles(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Create a role referencing the connection.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/dep-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Delete the connection.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "config/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response with warnings, got nil")
+	}
+	if len(resp.Warnings) == 0 {
+		t.Fatal("expected warnings about dependent roles")
+	}
+
+	found := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "dep-role") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning mentioning dep-role, got %v", resp.Warnings)
+	}
+}
+
+func TestConfigDeleteWarnsAboutDependentStaticRoles(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Create a static role referencing the connection.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/dep-static",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+			"client_id":       "some-client",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Delete the connection.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "config/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response with warnings, got nil")
+	}
+	if len(resp.Warnings) == 0 {
+		t.Fatal("expected warnings about dependent static roles")
+	}
+
+	found := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "dep-static") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning mentioning dep-static, got %v", resp.Warnings)
+	}
+}
+
+func TestConfigDeleteNoWarningWithoutDependents(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Delete the connection with no roles referencing it.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "config/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil {
+		t.Fatalf("expected nil response when no dependents, got %v", resp)
+	}
+}
