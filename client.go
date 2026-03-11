@@ -11,18 +11,22 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // newHTTPClient creates an HTTP client with optional TLS skip-verify.
 func newHTTPClient(insecureTLS bool) *http.Client {
 	if insecureTLS {
 		return &http.Client{
+			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-configured for self-signed certs
 			},
 		}
 	}
-	return &http.Client{}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+	}
 }
 
 // generateRandomSecret creates a cryptographically random 32-byte hex-encoded secret.
