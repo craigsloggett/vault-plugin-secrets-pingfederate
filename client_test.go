@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestUpdateClientSecret(t *testing.T) {
@@ -134,6 +135,31 @@ func TestGetAccessToken(t *testing.T) {
 	}
 	if tokenResp.ExpiresIn != 3600 {
 		t.Fatalf("unexpected expires_in: %d", tokenResp.ExpiresIn)
+	}
+}
+
+func TestNewHTTPClientTimeout(t *testing.T) {
+	tests := []struct {
+		name        string
+		insecureTLS bool
+	}{
+		{
+			name:        "insecure TLS enabled",
+			insecureTLS: true,
+		},
+		{
+			name:        "insecure TLS disabled",
+			insecureTLS: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newHTTPClient(tt.insecureTLS)
+			if client.Timeout != 30*time.Second {
+				t.Fatalf("expected timeout 30s, got %v", client.Timeout)
+			}
+		})
 	}
 }
 
