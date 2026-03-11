@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
@@ -3192,5 +3193,48 @@ func TestConfigDeleteNoWarningWithoutDependents(t *testing.T) {
 	}
 	if resp != nil {
 		t.Fatalf("expected nil response when no dependents, got %v", resp)
+	}
+}
+
+func TestPathOperations_HAForwardingFlags(t *testing.T) {
+	b, _ := newTestBackend(t)
+
+	writeOps := []logical.Operation{
+		logical.CreateOperation,
+		logical.UpdateOperation,
+		logical.DeleteOperation,
+	}
+
+	// creds/{name} UpdateOperation maps to credsReadOperation (read-only);
+	// it exists only so callers can pass scope in the request body.
+	type exclusionKey struct {
+		pattern string
+		op      logical.Operation
+	}
+	excluded := map[exclusionKey]bool{
+		{"creds/" + framework.GenericNameRegex("name"), logical.UpdateOperation}: true,
+	}
+
+	for _, p := range b.Paths {
+		for _, op := range writeOps {
+			handler, ok := p.Operations[op]
+			if !ok {
+				continue
+			}
+			if excluded[exclusionKey{p.Pattern, op}] {
+				continue
+			}
+			pathOp, ok := handler.(*framework.PathOperation)
+			if !ok {
+				t.Errorf("path %q operation %v: handler is not *framework.PathOperation", p.Pattern, op)
+				continue
+			}
+			if !pathOp.ForwardPerformanceStandby {
+				t.Errorf("path %q operation %v: ForwardPerformanceStandby is false, want true", p.Pattern, op)
+			}
+			if !pathOp.ForwardPerformanceSecondary {
+				t.Errorf("path %q operation %v: ForwardPerformanceSecondary is false, want true", p.Pattern, op)
+			}
+		}
 	}
 }

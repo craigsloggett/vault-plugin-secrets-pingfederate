@@ -56,22 +56,28 @@ func pathStaticRoles(b *pingFederateBackend) []*framework.Path {
 					},
 				},
 				logical.CreateOperation: &framework.PathOperation{
-					Callback: b.staticRoleWriteOperation,
-					Summary:  "Create or update a static role.",
+					Callback:                    b.staticRoleWriteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Create or update a static role.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "static-role",
 					},
 				},
 				logical.UpdateOperation: &framework.PathOperation{
-					Callback: b.staticRoleWriteOperation,
-					Summary:  "Create or update a static role.",
+					Callback:                    b.staticRoleWriteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Create or update a static role.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "static-role",
 					},
 				},
 				logical.DeleteOperation: &framework.PathOperation{
-					Callback: b.staticRoleDeleteOperation,
-					Summary:  "Delete a static role.",
+					Callback:                    b.staticRoleDeleteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Delete a static role.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "static-role",
 					},

@@ -59,22 +59,28 @@ func pathRoles(b *pingFederateBackend) []*framework.Path {
 					},
 				},
 				logical.CreateOperation: &framework.PathOperation{
-					Callback: b.roleWriteOperation,
-					Summary:  "Create or update a role.",
+					Callback:                    b.roleWriteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Create or update a role.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "role",
 					},
 				},
 				logical.UpdateOperation: &framework.PathOperation{
-					Callback: b.roleWriteOperation,
-					Summary:  "Create or update a role.",
+					Callback:                    b.roleWriteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Create or update a role.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "role",
 					},
 				},
 				logical.DeleteOperation: &framework.PathOperation{
-					Callback: b.roleDeleteOperation,
-					Summary:  "Delete a role.",
+					Callback:                    b.roleDeleteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Delete a role.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "role",
 					},
