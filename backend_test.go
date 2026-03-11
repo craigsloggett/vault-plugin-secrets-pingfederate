@@ -3639,6 +3639,8 @@ func TestConfigDeleteWarnsAboutDependentRoles(t *testing.T) {
 func TestConfigDeleteWarnsAboutDependentStaticRoles(t *testing.T) {
 	b, storage := newTestBackend(t)
 
+	b.clients["test"] = &mockPingFederateClient{}
+
 	writeTestConfig(t, b, storage)
 
 	// Create a static role referencing the connection.
