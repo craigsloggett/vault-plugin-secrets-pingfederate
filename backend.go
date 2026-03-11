@@ -59,9 +59,11 @@ func backend() *pingFederateBackend {
 			},
 			pathStaticRoles(b),
 		),
-		BackendType:  logical.TypeLogical,
-		Invalidate:   b.invalidate,
-		PeriodicFunc: b.periodicFunc,
+		BackendType:       logical.TypeLogical,
+		Invalidate:        b.invalidate,
+		PeriodicFunc:      b.periodicFunc,
+		WALRollback:       b.walRollback,
+		WALRollbackMinAge: 1 * time.Minute,
 	}
 
 	return b

@@ -3078,6 +3078,203 @@ func TestCredsReadWithoutAllowedMetadataKeysSendsAll(t *testing.T) {
 	}
 }
 
+// --- WAL Tests ---
+
+func TestRotateRootWALCreatedAndDeleted(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	b.clients["test"] = &mockPingFederateClient{
+		updateClientSecretFunc: func(_ context.Context, _ string) (string, error) {
+			return "rotated-secret", nil
+		},
+	}
+
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "rotate-root/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+
+	// Verify config was updated.
+	cfg, err := getConfig(context.Background(), storage, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientSecret != "rotated-secret" {
+		t.Fatalf("expected rotated-secret, got %q", cfg.ClientSecret)
+	}
+
+	// Verify no WAL entries remain.
+	wals, err := storage.List(context.Background(), "wal/")
+	if err != nil {
+		t.Fatalf("unexpected error listing WALs: %v", err)
+	}
+	if len(wals) != 0 {
+		t.Fatalf("expected no WAL entries after successful rotation, got %d", len(wals))
+	}
+}
+
+func TestRotateRootWALRollbackRecoversSecret(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Simulate a crash: write a WAL entry as if PingFederate accepted the
+	// new secret but the config write never happened.
+	walData := map[string]any{
+		"connection_name": "test",
+		"new_secret":      "recovered-secret",
+	}
+	entry, err := json.Marshal(map[string]any{
+		"type":       walRotateRootKind,
+		"data":       walData,
+		"created_at": 0,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal WAL entry: %v", err)
+	}
+	if err := storage.Put(context.Background(), &logical.StorageEntry{
+		Key:   "wal/test-wal-id",
+		Value: entry,
+	}); err != nil {
+		t.Fatalf("failed to write WAL: %v", err)
+	}
+
+	// Call rollback directly.
+	err = b.walRollback(context.Background(), &logical.Request{Storage: storage}, walRotateRootKind, walData)
+	if err != nil {
+		t.Fatalf("unexpected error during rollback: %v", err)
+	}
+
+	// Verify config now has the recovered secret.
+	cfg, err := getConfig(context.Background(), storage, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientSecret != "recovered-secret" {
+		t.Fatalf("expected recovered-secret, got %q", cfg.ClientSecret)
+	}
+}
+
+func TestRotateRootWALRollbackIdempotent(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	// Update config to already have the new secret.
+	cfg, err := getConfig(context.Background(), storage, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cfg.ClientSecret = "already-updated-secret"
+	entry, err := logical.StorageEntryJSON("config/test", cfg)
+	if err != nil {
+		t.Fatalf("failed to create storage entry: %v", err)
+	}
+	if err := storage.Put(context.Background(), entry); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// Rollback with the same secret should be a no-op.
+	walData := map[string]any{
+		"connection_name": "test",
+		"new_secret":      "already-updated-secret",
+	}
+	err = b.walRollback(context.Background(), &logical.Request{Storage: storage}, walRotateRootKind, walData)
+	if err != nil {
+		t.Fatalf("unexpected error during idempotent rollback: %v", err)
+	}
+
+	// Verify config is unchanged.
+	cfg, err = getConfig(context.Background(), storage, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ClientSecret != "already-updated-secret" {
+		t.Fatalf("expected already-updated-secret, got %q", cfg.ClientSecret)
+	}
+}
+
+func TestRotateRootWALRollbackDeletedConnection(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// No config written — simulate a deleted connection.
+	walData := map[string]any{
+		"connection_name": "deleted",
+		"new_secret":      "orphaned-secret",
+	}
+	err := b.walRollback(context.Background(), &logical.Request{Storage: storage}, walRotateRootKind, walData)
+	if err != nil {
+		t.Fatalf("expected nil error for deleted connection, got: %v", err)
+	}
+}
+
+func TestRotateRootWALRollbackUnknownKind(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	err := b.walRollback(context.Background(), &logical.Request{Storage: storage}, "unknownKind", map[string]any{})
+	if err == nil {
+		t.Fatal("expected error for unknown WAL kind")
+	}
+	if !strings.Contains(err.Error(), "unknown WAL kind") {
+		t.Fatalf("expected 'unknown WAL kind' error, got: %v", err)
+	}
+}
+
+func TestRotateRootPrivateKeyJWTNoWAL(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write a private_key_jwt config.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"auth_method":       "private_key_jwt",
+			"client_id":         "jwt-client",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Rotate root for JWT connection.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "rotate-root/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp)
+	}
+
+	// Verify no WAL entries were created.
+	wals, err := storage.List(context.Background(), "wal/")
+	if err != nil {
+		t.Fatalf("unexpected error listing WALs: %v", err)
+	}
+	if len(wals) != 0 {
+		t.Fatalf("expected no WAL entries for JWT rotation, got %d", len(wals))
+	}
+}
+
 func TestConfigDeleteWarnsAboutDependentRoles(t *testing.T) {
 	b, storage := newTestBackend(t)
 
