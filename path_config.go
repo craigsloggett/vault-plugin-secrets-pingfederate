@@ -113,22 +113,28 @@ func pathConfig(b *pingFederateBackend) []*framework.Path {
 					},
 				},
 				logical.CreateOperation: &framework.PathOperation{
-					Callback: b.configWriteOperation,
-					Summary:  "Configure a PingFederate connection.",
+					Callback:                    b.configWriteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Configure a PingFederate connection.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb: "configure",
 					},
 				},
 				logical.UpdateOperation: &framework.PathOperation{
-					Callback: b.configWriteOperation,
-					Summary:  "Configure a PingFederate connection.",
+					Callback:                    b.configWriteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Configure a PingFederate connection.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb: "configure",
 					},
 				},
 				logical.DeleteOperation: &framework.PathOperation{
-					Callback: b.configDeleteOperation,
-					Summary:  "Delete a PingFederate connection configuration.",
+					Callback:                    b.configDeleteOperation,
+					ForwardPerformanceStandby:   true,
+					ForwardPerformanceSecondary: true,
+					Summary:                     "Delete a PingFederate connection configuration.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationSuffix: "configuration",
 					},
