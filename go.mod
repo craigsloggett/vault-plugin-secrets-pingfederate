@@ -6,7 +6,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-uuid v1.0.3
-	github.com/hashicorp/vault/api v1.16.0
+	github.com/hashicorp/vault/api v1.22.0
 	github.com/hashicorp/vault/sdk v0.23.0
 )
 
@@ -103,7 +103,7 @@ require (
 	golang.org/x/oauth2 v0.28.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
-	golang.org/x/time v0.10.0 // indirect
+	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/api v0.221.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250207221924-e9438ea467c6 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
