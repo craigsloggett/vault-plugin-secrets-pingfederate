@@ -192,6 +192,10 @@ func (b *pingFederateBackend) roleWriteOperation(ctx context.Context, req *logic
 		return logical.ErrorResponse("connection %q does not exist", role.ConnectionName), nil
 	}
 
+	if !connectionAllowsRole(cfg, name) {
+		return logical.ErrorResponse("connection %q does not allow role %q; check the connection's allowed_roles", role.ConnectionName, name), nil
+	}
+
 	// Validate that default_scope values are a subset of allowed_scopes.
 	if len(role.AllowedScopes) > 0 && role.DefaultScope != "" {
 		allowed := make(map[string]bool, len(role.AllowedScopes))

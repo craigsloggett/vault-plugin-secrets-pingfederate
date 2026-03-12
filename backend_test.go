@@ -3828,3 +3828,371 @@ func TestStaticRoleWALRollbackDeletedRole(t *testing.T) {
 		t.Fatalf("expected orphaned-secret, got %q", stored.ClientSecret)
 	}
 }
+
+// --- Allowed Roles Tests ---
+
+func TestConfigAllowedRolesRoundTrip(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with allowed_roles.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
+			"allowed_roles":     "role-a,role-b",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Read it back.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+	roles, ok := resp.Data["allowed_roles"].([]string)
+	if !ok {
+		t.Fatalf("expected allowed_roles to be []string, got %T", resp.Data["allowed_roles"])
+	}
+	if len(roles) != 2 || roles[0] != "role-a" || roles[1] != "role-b" {
+		t.Fatalf("expected [role-a role-b], got %v", roles)
+	}
+}
+
+func TestConfigAllowedRolesNotReturnedWhenEmpty(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	writeTestConfig(t, b, storage)
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "config/test",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, exists := resp.Data["allowed_roles"]; exists {
+		t.Fatal("expected allowed_roles to not be in response when empty")
+	}
+}
+
+func TestRoleWriteBlockedByAllowedRoles(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config allowing only "permitted-role".
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
+			"allowed_roles":     "permitted-role",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Attempt to create a role not in allowed_roles.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/denied-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for role not in allowed_roles")
+	}
+	if !strings.Contains(resp.Error().Error(), "does not allow role") {
+		t.Fatalf("expected 'does not allow role' in error, got: %s", resp.Error())
+	}
+
+	// Create a role that IS in allowed_roles.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/permitted-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+}
+
+func TestRoleWriteAllowedRolesWildcard(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with wildcard allowed_roles.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
+			"allowed_roles":     "*",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Any role should be allowed.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "roles/any-role",
+		Storage:   storage,
+		Data: map[string]any{
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+}
+
+func TestCredsReadBlockedByAllowedRoles(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config with no allowed_roles (open) and create a role.
+	writeTestConfig(t, b, storage)
+	writeTestRole(t, b, storage)
+
+	// Now update the config to restrict allowed_roles.
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"allowed_roles":     "other-role",
+			"verify_connection": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Creds read should fail for the existing role that is no longer allowed.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "creds/test-role",
+		Storage:   storage,
+		EntityID:  "test-entity",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for role not in allowed_roles at creds read")
+	}
+	if !strings.Contains(resp.Error().Error(), "does not allow role") {
+		t.Fatalf("expected 'does not allow role' in error, got: %s", resp.Error())
+	}
+}
+
+func TestStaticRoleWriteBlockedByAllowedRoles(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write config allowing only "permitted-static".
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":         "admin-client",
+			"client_secret":     "admin-secret",
+			"url":               "https://pingfederate.example.com:9999",
+			"token_url":         "https://pingfederate.example.com:9031/as/token.oauth2",
+			"verify_connection": false,
+			"allowed_roles":     "permitted-static",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Inject mock client to avoid real PF calls.
+	b.lock.Lock()
+	b.clients["test"] = &mockPingFederateClient{}
+	b.lock.Unlock()
+
+	// Attempt to create a static role not in allowed_roles.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/denied-static",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":       "target-client",
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for static role not in allowed_roles")
+	}
+	if !strings.Contains(resp.Error().Error(), "does not allow role") {
+		t.Fatalf("expected 'does not allow role' in error, got: %s", resp.Error())
+	}
+}
+
+func TestStaticCredsReadBlockedByAllowedRoles(t *testing.T) {
+	b, storage := newTestBackend(t)
+
+	// Write open config, create static role, then restrict.
+	writeTestConfig(t, b, storage)
+
+	b.lock.Lock()
+	b.clients["test"] = &mockPingFederateClient{}
+	b.lock.Unlock()
+
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.CreateOperation,
+		Path:      "static-roles/my-static",
+		Storage:   storage,
+		Data: map[string]any{
+			"client_id":       "target-client",
+			"connection_name": "test",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Restrict allowed_roles.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "config/test",
+		Storage:   storage,
+		Data: map[string]any{
+			"allowed_roles":     "other-role",
+			"verify_connection": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf("unexpected error response: %v", resp.Error())
+	}
+
+	// Static creds read should be blocked.
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      "static-creds/my-static",
+		Storage:   storage,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatal("expected error response for static role not in allowed_roles at static-creds read")
+	}
+	if !strings.Contains(resp.Error().Error(), "does not allow role") {
+		t.Fatalf("expected 'does not allow role' in error, got: %s", resp.Error())
+	}
+}
+
+func TestConnectionAllowsRole(t *testing.T) {
+	tests := []struct {
+		name         string
+		allowedRoles []string
+		roleName     string
+		want         bool
+	}{
+		{
+			name:         "empty allowed_roles allows all",
+			allowedRoles: nil,
+			roleName:     "any-role",
+			want:         true,
+		},
+		{
+			name:         "wildcard allows all",
+			allowedRoles: []string{"*"},
+			roleName:     "any-role",
+			want:         true,
+		},
+		{
+			name:         "exact match allowed",
+			allowedRoles: []string{"role-a", "role-b"},
+			roleName:     "role-b",
+			want:         true,
+		},
+		{
+			name:         "no match denied",
+			allowedRoles: []string{"role-a", "role-b"},
+			roleName:     "role-c",
+			want:         false,
+		},
+		{
+			name:         "wildcard with others",
+			allowedRoles: []string{"role-a", "*"},
+			roleName:     "anything",
+			want:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &pingFederateConfig{AllowedRoles: tt.allowedRoles}
+			got := connectionAllowsRole(cfg, tt.roleName)
+			if got != tt.want {
+				t.Errorf("connectionAllowsRole(%v, %q) = %v, want %v", tt.allowedRoles, tt.roleName, got, tt.want)
+			}
+		})
+	}
+}

@@ -73,6 +73,10 @@ func (b *pingFederateBackend) credsReadOperation(ctx context.Context, req *logic
 		return logical.ErrorResponse("connection %q not configured", role.ConnectionName), nil
 	}
 
+	if !connectionAllowsRole(cfg, name) {
+		return logical.ErrorResponse("connection %q does not allow role %q; check the connection's allowed_roles", role.ConnectionName, name), nil
+	}
+
 	client, err := b.getClientForConnection(ctx, req.Storage, role.ConnectionName)
 	if err != nil {
 		return nil, err
