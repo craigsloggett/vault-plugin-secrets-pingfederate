@@ -3,7 +3,7 @@ module github.com/craigsloggett/vault-plugin-secrets-pingfederate
 go 1.26.0
 
 require (
-	github.com/go-jose/go-jose/v4 v4.0.5
+	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-uuid v1.0.3
 	github.com/hashicorp/vault/api v1.16.0
