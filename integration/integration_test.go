@@ -54,11 +54,12 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_InternalKey(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
 	writePluginConfig(t, client, "test", map[string]any{
-		"client_id":    "vault-foothold-jwt",
-		"auth_method":  "private_key_jwt",
-		"url":          pfAdminURL,
-		"token_url":    pfTokenURL,
-		"insecure_tls": true,
+		"client_id":           "vault-foothold-jwt",
+		"auth_method":         "private_key_jwt",
+		"url":                 pfAdminURL,
+		"token_url":           pfTokenURL,
+		"insecure_tls":        true,
+		"verify_connection":   false,
 	})
 
 	secret := readPluginConfig(t, client, "test")
@@ -98,13 +99,14 @@ func TestIntegration_ConfigWrite_PrivateKeyJWT_ExternalKey(t *testing.T) {
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
 
 	writePluginConfig(t, client, "test", map[string]any{
-		"client_id":         "vault-foothold-jwt",
-		"auth_method":       "private_key_jwt",
-		"signing_algorithm": "ES256",
-		"private_key":       string(keyPEM),
-		"url":               pfAdminURL,
-		"token_url":         pfTokenURL,
-		"insecure_tls":      true,
+		"client_id":           "vault-foothold-jwt",
+		"auth_method":         "private_key_jwt",
+		"signing_algorithm":   "ES256",
+		"private_key":         string(keyPEM),
+		"url":                 pfAdminURL,
+		"token_url":           pfTokenURL,
+		"insecure_tls":        true,
+		"verify_connection":   false,
 	})
 
 	secret := readPluginConfig(t, client, "test")
@@ -134,9 +136,9 @@ func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 		"insecure_tls":  true,
 	})
 
-	// Update only insecure_tls.
+	// Update only admin_username.
 	writePluginConfig(t, client, "test", map[string]any{
-		"insecure_tls": false,
+		"admin_username": "updated-admin",
 	})
 
 	secret := readPluginConfig(t, client, "test")
@@ -145,12 +147,8 @@ func TestIntegration_ConfigUpdate_PartialFields(t *testing.T) {
 	}
 
 	// Verify updated field.
-	insecure, ok := secret.Data["insecure_tls"]
-	if !ok {
-		t.Fatal("expected insecure_tls in response")
-	}
-	if insecure != false {
-		t.Errorf("insecure_tls = %v, want false", insecure)
+	if v := requireField(t, secret.Data, "admin_username"); v != "updated-admin" {
+		t.Errorf("admin_username = %q, want %q", v, "updated-admin")
 	}
 
 	// Verify other fields retained.
@@ -226,11 +224,12 @@ func TestIntegration_JWKS_ReturnsKeyWithPrivateKeyJWT(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
 	writePluginConfig(t, client, "test", map[string]any{
-		"client_id":    "vault-foothold-jwt",
-		"auth_method":  "private_key_jwt",
-		"url":          pfAdminURL,
-		"token_url":    pfTokenURL,
-		"insecure_tls": true,
+		"client_id":           "vault-foothold-jwt",
+		"auth_method":         "private_key_jwt",
+		"url":                 pfAdminURL,
+		"token_url":           pfTokenURL,
+		"insecure_tls":        true,
+		"verify_connection":   false,
 	})
 
 	// Read the config to get the kid.
@@ -278,11 +277,12 @@ func TestIntegration_JWKS_Unauthenticated(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, client, "test") })
 
 	writePluginConfig(t, client, "test", map[string]any{
-		"client_id":    "vault-foothold-jwt",
-		"auth_method":  "private_key_jwt",
-		"url":          pfAdminURL,
-		"token_url":    pfTokenURL,
-		"insecure_tls": true,
+		"client_id":           "vault-foothold-jwt",
+		"auth_method":         "private_key_jwt",
+		"url":                 pfAdminURL,
+		"token_url":           pfTokenURL,
+		"insecure_tls":        true,
+		"verify_connection":   false,
 	})
 
 	statusCode, result := readJWKSRaw(t, "test")
@@ -359,12 +359,17 @@ func TestIntegration_Creds_PrivateKeyJWT(t *testing.T) {
 	})
 
 	writePluginConfig(t, rootClient, "test", map[string]any{
-		"client_id":    "vault-foothold-jwt",
-		"auth_method":  "private_key_jwt",
-		"url":          pfAdminURL,
-		"token_url":    pfTokenURL,
-		"insecure_tls": true,
+		"client_id":           "vault-foothold-jwt",
+		"auth_method":         "private_key_jwt",
+		"url":                 pfAdminURL,
+		"token_url":           pfTokenURL,
+		"insecure_tls":        true,
+		"verify_connection":   false,
 	})
+
+	// Push the generated JWKS to PF so it can validate JWT assertions
+	// without needing to reach Vault's JWKS endpoint from the container.
+	pushJWKSToPF(t, rootClient, "test", "vault-foothold-jwt")
 
 	writePluginRole(t, rootClient, "test-role", map[string]any{
 		"connection_name": "test",
@@ -473,7 +478,7 @@ func TestIntegration_RotateRoot_ClientSecret(t *testing.T) {
 	})
 
 	writePluginConfig(t, rootClient, "test", map[string]any{
-		"client_id":      "vault-foothold-secret",
+		"client_id":      "vault-rotate-test",
 		"client_secret":  footholdSecret,
 		"url":            pfAdminURL,
 		"token_url":      pfTokenURL,
@@ -513,11 +518,12 @@ func TestIntegration_RotateRoot_PrivateKeyJWT(t *testing.T) {
 	t.Cleanup(func() { deletePluginConfig(t, rootClient, "test") })
 
 	writePluginConfig(t, rootClient, "test", map[string]any{
-		"client_id":    "vault-foothold-jwt",
-		"auth_method":  "private_key_jwt",
-		"url":          pfAdminURL,
-		"token_url":    pfTokenURL,
-		"insecure_tls": true,
+		"client_id":           "vault-foothold-jwt",
+		"auth_method":         "private_key_jwt",
+		"url":                 pfAdminURL,
+		"token_url":           pfTokenURL,
+		"insecure_tls":        true,
+		"verify_connection":   false,
 	})
 
 	// Read initial kid.

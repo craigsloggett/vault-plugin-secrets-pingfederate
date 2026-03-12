@@ -124,6 +124,11 @@ else
     echo "  $admin_body"
 fi
 
+# Delete existing OAuth clients to ensure a clean slate (handles stale container state).
+for client_id in vault-foothold-secret vault-foothold-jwt vault-rotate-test target-service-account; do
+    curl "${CURL_OPTS[@]}" -o /dev/null -X DELETE "${PF_ADMIN_URL}/pf-admin-api/v1/oauth/clients/${client_id}" 2>/dev/null || true
+done
+
 # 1. vault-foothold-secret — client_secret auth for foothold tests.
 echo "Creating OAuth client: vault-foothold-secret..."
 response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
@@ -151,7 +156,9 @@ else
 fi
 
 # 2. vault-foothold-jwt — private_key_jwt auth for foothold tests.
-#    JWKS URL points to Vault's JWKS endpoint via the container gateway.
+#    Created with a jwksUrl placeholder. The PF container cannot reach Vault on
+#    the host network, so integration tests that need JWT validation push inline
+#    JWKS to this client via the admin API before requesting creds.
 echo "Creating OAuth client: vault-foothold-jwt..."
 response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
     "${PF_ADMIN_URL}/pf-admin-api/v1/oauth/clients" \
@@ -163,7 +170,7 @@ response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
             "enforceReplayPrevention": false
         },
         "jwksSettings": {
-            "jwksUrl": "'"${VAULT_ADDR_CONTAINER}"'/v1/pingfederate/jwks"
+            "jwksUrl": "'"${VAULT_ADDR_CONTAINER}"'/v1/pingfederate/jwks/test"
         },
         "grantTypes": ["CLIENT_CREDENTIALS"],
         "defaultAccessTokenManagerRef": { "id": "jwtatm" }
@@ -180,7 +187,62 @@ else
     exit 1
 fi
 
-# 3. target-service-account — target client for static-creds management tests.
+# 3. vault-rotate-test — dedicated client for rotate-root tests.
+#    Isolated from vault-foothold-secret so rotation doesn't poison other tests.
+echo "Creating admin account: vault-rotate-test..."
+admin_response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
+    -X POST \
+    "${PF_ADMIN_URL}/pf-admin-api/v1/administrativeAccounts" \
+    -d '{
+        "username": "vault-rotate-test",
+        "password": "'"${FOOTHOLD_SECRET}"'",
+        "active": true,
+        "roles": ["ADMINISTRATOR"],
+        "auditor": false
+    }' 2>/dev/null)
+
+admin_code=$(echo "$admin_response" | tail -1)
+admin_body=$(echo "$admin_response" | sed '$d')
+if [ "$admin_code" = "201" ] || [ "$admin_code" = "200" ]; then
+    echo "  Admin account created."
+elif [ "$admin_code" = "422" ]; then
+    if echo "$admin_body" | grep -q "already exists"; then
+        echo "  Admin account already exists."
+    else
+        echo "  Warning: Admin account creation returned HTTP 422:"
+        echo "  $admin_body"
+    fi
+else
+    echo "  Warning: Admin account creation returned HTTP $admin_code:"
+    echo "  $admin_body"
+fi
+
+echo "Creating OAuth client: vault-rotate-test..."
+response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
+    "${PF_ADMIN_URL}/pf-admin-api/v1/oauth/clients" \
+    -d '{
+        "clientId": "vault-rotate-test",
+        "name": "Vault Rotate Test",
+        "clientAuth": {
+            "type": "SECRET",
+            "secret": "'"${FOOTHOLD_SECRET}"'"
+        },
+        "grantTypes": ["CLIENT_CREDENTIALS"],
+        "defaultAccessTokenManagerRef": { "id": "jwtatm" }
+    }' 2>/dev/null)
+
+code=$(echo "$response" | tail -1)
+if [ "$code" = "201" ] || [ "$code" = "200" ]; then
+    echo "  Created vault-rotate-test."
+elif [ "$code" = "422" ]; then
+    echo "  vault-rotate-test already exists."
+else
+    echo "  Error creating vault-rotate-test (HTTP $code):"
+    echo "$response" | sed '$d'
+    exit 1
+fi
+
+# 4. target-service-account — target client for static-creds management tests.
 echo "Creating OAuth client: target-service-account..."
 response=$(curl "${CURL_OPTS[@]}" -w "\n%{http_code}" \
     "${PF_ADMIN_URL}/pf-admin-api/v1/oauth/clients" \

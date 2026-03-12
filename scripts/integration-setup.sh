@@ -17,7 +17,8 @@ export VAULT_ADDR="http://127.0.0.1:8200"
 export VAULT_TOKEN="root"
 
 # Apple Containers network gateway — used by PingFederate (inside the container)
-# to reach Vault (on the host) via a socat bridge.
+# to reach Vault (on the host). Vault binds to 0.0.0.0 so it is directly
+# reachable on the bridge100 interface.
 CONTAINER_GATEWAY_IP="192.168.64.1"
 export VAULT_ADDR_CONTAINER="http://${CONTAINER_GATEWAY_IP}:8200"
 
@@ -78,7 +79,7 @@ echo "--- Starting Vault dev server ---"
 pkill -f "vault server -dev" 2>/dev/null || true
 sleep 1
 
-vault server -dev -dev-root-token-id=root -dev-plugin-dir="${PROJECT_DIR}/bin" > /tmp/vault-integration.log 2>&1 &
+vault server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200 -dev-plugin-dir="${PROJECT_DIR}/bin" > /tmp/vault-integration.log 2>&1 &
 VAULT_PID=$!
 echo "${VAULT_PID}" > /tmp/vault-integration.pid
 
@@ -95,29 +96,18 @@ until vault status > /dev/null 2>&1; do
 done
 echo "Vault is ready (PID: ${VAULT_PID})."
 
-# Step 5: Start socat bridge so PingFederate (in container) can reach Vault (on host).
-# The container network gateway is 192.168.64.1; socat forwards traffic to localhost.
-echo ""
-echo "--- Starting socat bridge (${CONTAINER_GATEWAY_IP}:8200 -> 127.0.0.1:8200) ---"
-pkill -f "socat TCP-LISTEN:8200.*bind=${CONTAINER_GATEWAY_IP}" 2>/dev/null || true
-sleep 1
-socat "TCP-LISTEN:8200,fork,bind=${CONTAINER_GATEWAY_IP}" TCP:127.0.0.1:8200 &
-SOCAT_PID=$!
-echo "${SOCAT_PID}" > /tmp/socat-integration.pid
-echo "socat bridge started (PID: ${SOCAT_PID})."
-
-# Step 6: Enable the plugin.
+# Step 5: Enable the plugin.
 echo ""
 echo "--- Enabling plugin ---"
 vault secrets enable -path=pingfederate vault-plugin-secrets-pingfederate
 echo "Plugin enabled at pingfederate/."
 
-# Step 7: Configure PingFederate OAuth clients.
+# Step 6: Configure PingFederate OAuth clients.
 echo ""
 echo "--- Configuring PingFederate OAuth clients ---"
 bash "${SCRIPT_DIR}/configure-pingfederate.sh"
 
-# Step 8: Set up Vault identity for token brokering tests.
+# Step 7: Set up Vault identity for token brokering tests.
 echo ""
 echo "--- Setting up Vault identity ---"
 
@@ -153,7 +143,7 @@ vault write identity/entity-alias \
     mount_accessor="${ACCESSOR}"
 echo "  Entity alias created."
 
-# Step 9: Create default roles for integration tests.
+# Step 8: Create default roles for integration tests.
 echo ""
 echo "--- Creating default roles ---"
 

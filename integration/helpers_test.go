@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -191,6 +192,66 @@ func readJWKSRaw(t *testing.T, connName string) (int, map[string]any) {
 	}
 
 	return resp.StatusCode, result
+}
+
+// pushJWKSToPF reads the JWKS from Vault for the given connection and updates the
+// PF OAuth client with inline JWKS. This is needed because the PF container
+// cannot reach Vault's JWKS endpoint on the host network.
+func pushJWKSToPF(t *testing.T, vaultClient *api.Client, connName, pfClientID string) {
+	t.Helper()
+
+	// Read JWKS from Vault.
+	_, jwksData := readJWKSRaw(t, connName)
+	jwksJSON, err := json.Marshal(jwksData)
+	if err != nil {
+		t.Fatalf("failed to marshal JWKS: %v", err)
+	}
+
+	// Build the PF client update payload with inline JWKS.
+	pfClient := map[string]any{
+		"clientId": pfClientID,
+		"name":     "Vault Foothold (JWT)",
+		"clientAuth": map[string]any{
+			"type":                    "PRIVATE_KEY_JWT",
+			"enforceReplayPrevention": false,
+		},
+		"jwksSettings": map[string]any{
+			"jwks": string(jwksJSON),
+		},
+		"grantTypes":                 []string{"CLIENT_CREDENTIALS"},
+		"defaultAccessTokenManagerRef": map[string]any{"id": "jwtatm"},
+	}
+	payload, err := json.Marshal(pfClient)
+	if err != nil {
+		t.Fatalf("failed to marshal PF client payload: %v", err)
+	}
+
+	// Update the PF client via admin API.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // integration test
+		},
+	}
+	req, err := http.NewRequest(http.MethodPut,
+		pfAdminURL+"/pf-admin-api/v1/oauth/clients/"+pfClientID,
+		bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("failed to create PF client update request: %v", err)
+	}
+	req.SetBasicAuth(pfAdminUser, pfAdminPassword)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-XSRF-Header", "PingFederate")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to update PF client JWKS: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("PF client update failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
 }
 
 // requireField asserts a field exists in the secret data and returns its string value.
