@@ -233,6 +233,14 @@ func (b *pingFederateBackend) staticCredsReadOperation(ctx context.Context, req 
 		return logical.ErrorResponse("static role %q is missing connection_name; update the role to set it", name), nil
 	}
 
+	cfg, err := getConfig(ctx, req.Storage, role.ConnectionName)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil && !connectionAllowsRole(cfg, name) {
+		return logical.ErrorResponse("connection %q does not allow role %q; check the connection's allowed_roles", role.ConnectionName, name), nil
+	}
+
 	storedSecret, err := getStaticRoleSecret(ctx, req.Storage, name)
 	if err != nil {
 		return nil, err
@@ -301,6 +309,10 @@ func (b *pingFederateBackend) staticRoleWriteOperation(ctx context.Context, req 
 	}
 	if cfg == nil {
 		return logical.ErrorResponse("connection %q does not exist", role.ConnectionName), nil
+	}
+
+	if !connectionAllowsRole(cfg, name) {
+		return logical.ErrorResponse("connection %q does not allow role %q; check the connection's allowed_roles", role.ConnectionName, name), nil
 	}
 
 	if role.RotationPeriod > 0 && role.RotationPeriod < 60*time.Second {

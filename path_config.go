@@ -11,18 +11,19 @@ import (
 )
 
 type pingFederateConfig struct {
-	AuthMethod       string `json:"auth_method,omitempty"`
-	ClientID         string `json:"client_id"`
-	ClientSecret     string `json:"client_secret,omitempty"`
-	AdminUsername    string `json:"admin_username,omitempty"`
-	AdminPassword    string `json:"admin_password,omitempty"`
-	PrivateKey       string `json:"private_key,omitempty"`
-	PrivateKeyID     string `json:"private_key_id,omitempty"`
-	SigningAlgorithm string `json:"signing_algorithm,omitempty"`
-	URL              string `json:"url"`
-	TokenURL         string `json:"token_url"`
-	InsecureTLS      bool   `json:"insecure_tls,omitempty"`
-	KeySource        string `json:"key_source,omitempty"`
+	AuthMethod       string   `json:"auth_method,omitempty"`
+	ClientID         string   `json:"client_id"`
+	ClientSecret     string   `json:"client_secret,omitempty"`
+	AdminUsername    string   `json:"admin_username,omitempty"`
+	AdminPassword    string   `json:"admin_password,omitempty"`
+	PrivateKey       string   `json:"private_key,omitempty"`
+	PrivateKeyID     string   `json:"private_key_id,omitempty"`
+	SigningAlgorithm string   `json:"signing_algorithm,omitempty"`
+	URL              string   `json:"url"`
+	TokenURL         string   `json:"token_url"`
+	InsecureTLS      bool     `json:"insecure_tls,omitempty"`
+	KeySource        string   `json:"key_source,omitempty"`
+	AllowedRoles     []string `json:"allowed_roles,omitempty"`
 }
 
 func pathConfig(b *pingFederateBackend) []*framework.Path {
@@ -97,6 +98,10 @@ func pathConfig(b *pingFederateBackend) []*framework.Path {
 				"insecure_tls": {
 					Type:        framework.TypeBool,
 					Description: "If true, skip TLS certificate verification when connecting to PingFederate. Not recommended for production.",
+				},
+				"allowed_roles": {
+					Type:        framework.TypeCommaStringSlice,
+					Description: `Comma-separated list of role names that may reference this connection. If set, roles not in this list are rejected on creation and denied at credential generation. Use "*" to allow all roles.`,
 				},
 				"verify_connection": {
 					Type:        framework.TypeBool,
@@ -213,6 +218,9 @@ func (b *pingFederateBackend) configReadOperation(ctx context.Context, req *logi
 	if cfg.AdminUsername != "" {
 		data["admin_username"] = cfg.AdminUsername
 	}
+	if len(cfg.AllowedRoles) > 0 {
+		data["allowed_roles"] = cfg.AllowedRoles
+	}
 
 	return &logical.Response{
 		Data: data,
@@ -265,6 +273,9 @@ func (b *pingFederateBackend) configWriteOperation(ctx context.Context, req *log
 	}
 	if v, ok := d.GetOk("insecure_tls"); ok {
 		cfg.InsecureTLS, _ = v.(bool)
+	}
+	if v, ok := d.GetOk("allowed_roles"); ok {
+		cfg.AllowedRoles, _ = v.([]string)
 	}
 
 	if cfg.ClientID == "" {
@@ -440,4 +451,19 @@ func getConfig(ctx context.Context, s logical.Storage, name string) (*pingFedera
 	}
 
 	return &cfg, nil
+}
+
+// connectionAllowsRole checks whether the connection's allowed_roles list
+// permits the given role name. Returns true if allowed_roles is unset (open)
+// or if it contains "*" or the exact role name.
+func connectionAllowsRole(cfg *pingFederateConfig, roleName string) bool {
+	if len(cfg.AllowedRoles) == 0 {
+		return true
+	}
+	for _, r := range cfg.AllowedRoles {
+		if r == "*" || r == roleName {
+			return true
+		}
+	}
+	return false
 }
