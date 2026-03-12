@@ -7,7 +7,7 @@ SHELL         := env PATH=$(PATH) GOPATH=$(GOPATH) /bin/sh
 PYTHON        ?= python3
 
 # Versions
-go_version           := 1.26.0
+go_version           := 1.26.1
 golangci_version     := 2.10.1
 actionlint_version   := 1.7.11
 shellcheck_version   := 0.11.0
