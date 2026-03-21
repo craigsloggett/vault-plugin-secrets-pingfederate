@@ -1,0 +1,28 @@
+version: 2
+
+builds:
+  - main: ./cmd/vault-plugin-secrets-pingfederate
+    binary: vault-plugin-secrets-pingfederate
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - format: zip
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+
+release:
+  mode: append
