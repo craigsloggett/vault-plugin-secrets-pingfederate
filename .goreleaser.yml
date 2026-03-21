@@ -17,7 +17,7 @@ builds:
       - -s -w
 
 archives:
-  - format: zip
+  - formats: [zip]
     name_template: '{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}'
 
 checksum:
