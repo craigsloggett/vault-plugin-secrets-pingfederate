@@ -25,6 +25,7 @@ rules:
   indentation:
     level: error
     spaces: 2
+    indent-sequences: true
 
   quoted-strings:
     quote-type: single
