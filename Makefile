@@ -6,7 +6,7 @@ PLATFORMS   := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 export VAULT_ADDR  := http://127.0.0.1:8200
 export VAULT_TOKEN := root
 
-.PHONY: build clean dev enable
+.PHONY: build clean dev enable lint test
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -28,3 +28,13 @@ clean:
 
 enable:
 	vault secrets enable -path=pingfederate $(PLUGIN_NAME)
+
+lint:
+	yamllint .
+	golangci-lint run
+	go mod tidy
+	git diff --exit-code go.mod go.sum
+	govulncheck ./...
+
+test:
+	go test -race -count=1 ./...
