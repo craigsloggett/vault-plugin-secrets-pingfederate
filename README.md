@@ -1,2 +1,3 @@
-# vault-plugin-secrets-pingfederate
-A HashiCorp Vault secrets engine plugin for managing PingFederate credentials.
+# PingFederate Vault Secret Plugin
+
+A HashiCorp Vault secret engine to generate PingFederate access tokens.
