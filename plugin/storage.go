@@ -15,6 +15,9 @@ const (
 // server represents a PingFederate instance. Each server has its own
 // URL and KeyRing for signing JWT client assertions.
 type server struct {
+	// isNewEntry is true when the server was not found in storage.
+	// It is never serialized, it exists only to distinguish "not found"
+	// from "exists with zero values" in path handlers.
 	isNewEntry bool
 
 	PingURL string `json:"ping_url"`
