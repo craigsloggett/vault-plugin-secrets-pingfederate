@@ -9,6 +9,10 @@ import (
 )
 
 const (
+	// operationPrefixPing is used by the framework to generate API
+	// documentation. Every path operation is prefixed with this value.
+	operationPrefixPing = "ping"
+
 	// backendHelp is displayed when a user runs `vault path-help <mount>/`.
 	backendHelp = `
 EXPERIMENTAL: This plugin is under active development and is not
@@ -44,8 +48,11 @@ func newBackend() *PingFederateBackend {
 		BackendType:    logical.TypeLogical,
 		Help:           backendHelp,
 		InitializeFunc: b.initialize,
-		Paths:          []*framework.Path{},
-		PathsSpecial:   &logical.Paths{},
+		Paths: []*framework.Path{
+			pathServer(b),
+			pathListServers(b),
+		},
+		PathsSpecial: &logical.Paths{},
 	}
 
 	return b
