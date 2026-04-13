@@ -1,6 +1,6 @@
 module github.com/craigsloggett/vault-plugin-secrets-pingfederate
 
-go 1.25.8
+go 1.25.9
 
 // SDK and API versions are pinned to match Vault v1.21.4.
 require (
