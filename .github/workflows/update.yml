@@ -1,0 +1,39 @@
+name: Update
+
+on:
+  schedule:
+    # Run weekly on Mondays at 10:00 UTC
+    - cron: 0 10 * * 1
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  bump:
+    name: Bump
+    # yamllint disable-line rule:line-length
+    uses: craigsloggett/github-workflows/.github/workflows/update-terraform-provider.yml@0efb636aaa7d81ee74c43bef37c53a7d9820f695 # v0.1.1
+    with:
+      tools: |
+        - tool: govulncheck
+          scope: build
+          files:
+            - path: .github/workflows/lint.yml
+              key: >-
+                .jobs.govulncheck.steps[] |
+                select(.env.GOVULNCHECK_VERSION) |
+                .env.GOVULNCHECK_VERSION
+        - tool: golangci-lint
+          scope: build
+          files:
+            - path: .github/workflows/lint.yml
+              key: >-
+                .jobs["golangci-lint"].steps[] |
+                select(.uses | test("golangci/golangci-lint-action")) |
+                .with.version
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
